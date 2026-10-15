@@ -53,7 +53,8 @@ local YMIN, YMAX = 24, 240                    -- area de jogo (embaixo fica o HU
 -- Habilidades
 local ESC_MAX, ESC_REGEN = 120, 0.4           -- escudo: energia (1/frame em uso) e regeneracao
 local CARGA_MIN, CARGA_MAX, LASER_CD = 30, 45, 150
-local DASH_T, DASH_VEL, DASH_CD = 10, 8, 75
+local DASH_T, DASH_VEL, DASH_CD = 12, 10, 75   -- dash: frames, velocidade inicial (freia ate 40%), recarga
+local RASTRO_N, RASTRO_VIDA = 12, 24           -- ecos da nave deixados pelo dash
 local LEQUE_CD, LEQUE_VY = 90, 1.5
 local DEBUG_CARGAS = 1                        -- DEBUGs do jogador por rodada
 -- Evento CHUVA DE ASTEROIDES (sprites src/asteroides/*.png, Space Shooter Redux por Kenney, CC0)
@@ -123,6 +124,7 @@ if Sprites and Sprites.projeteis then
   LASER_V = Sprites.projeteis["laser-rose"]
 end
 local cam_dx, cam_dy = 0, 0   -- deslocamento do shake (o clip e em coordenada de tela)
+local escala_tiros = 1        -- camera lenta dos tiros do virus (usada no tutorial do dash)
 local AST_SPR = {}   -- sem o PNG, o asteroide vira um circulo
 if Sprites and Sprites.asteroides then
   for i = 1, #AST_TIPOS do AST_SPR[i] = Sprites.asteroides[AST_TIPOS[i].nome] end
@@ -303,7 +305,8 @@ local function novo_player(id, x, cor, dir)
            dir = dir, vidas = VIDAS, recarga = 0, hit = 0, vy_ult = 0,
            -- habilidades
            energia = ESC_MAX, escudo = false, quebrado = false, carga = 0, laser_cd = 0,
-           dash_t = 0, dash_dir = 0, dash_cd = 0, leque_cd = 0, debug = 0,
+           dash_t = 0, dash_dx = 0, dash_dy = 0, dash_cd = 0, leque_cd = 0, debug = 0,
+           rastro_x = {}, rastro_y = {}, rastro_t = {}, rastro_i = 0,
            -- so a CPU usa: parametros atuais da IA e estado da decisao
            cpu = id == 2, reacao = 0, erro = 0, desvio = 0, cont = 0, alvo_y = H / 2 - 8, quer_atirar = false,
            escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0, debug_neg = 0 }
@@ -502,18 +505,26 @@ local function atualiza_player(p)
     if p.quebrado and p.energia >= ESC_MAX / 2 then p.quebrado = false end
   end
 
-  -- L: dash
+  -- L: dash na direcao segurada (diagonais valem); sem direcao = para frente. Invencivel durante.
   if p.dash_cd > 0 then p.dash_cd = p.dash_cd - 1 end
   if dash and p.dash_cd <= 0 and p.dash_t <= 0 then
     p.dash_t, p.dash_cd = DASH_T, DASH_CD
-    p.dash_dir = dy ~= 0 and dy or (p.y > (YMIN + YMAX) / 2 and -1 or 1)
+    local ddx, ddy = dx, dy
+    if ddx == 0 and ddy == 0 then ddx = p.dir end
+    if ddx ~= 0 and ddy ~= 0 then ddx, ddy = ddx * 0.7071, ddy * 0.7071 end
+    p.dash_dx, p.dash_dy = ddx, ddy
+    explode(p.x + 8, p.y + 8, BRANCO, 4)
   end
+  for k = 1, RASTRO_N do if p.rastro_t[k] and p.rastro_t[k] > 0 then p.rastro_t[k] = p.rastro_t[k] - 1 end end
 
   local y0 = p.y
   if p.dash_t > 0 then
+    local v = DASH_VEL * (0.4 + 0.6 * p.dash_t / DASH_T)   -- arranca rapido e freia suave
     p.dash_t = p.dash_t - 1
-    p.y = p.y + p.dash_dir * DASH_VEL
-    if p.dash_t % 2 == 0 then explode(p.x + 8, p.y + 8, p.cor, 1) end
+    p.x, p.y = p.x + p.dash_dx * v, p.y + p.dash_dy * v
+    p.rastro_i = p.rastro_i % RASTRO_N + 1                 -- grava um eco por frame
+    p.rastro_x[p.rastro_i], p.rastro_y[p.rastro_i], p.rastro_t[p.rastro_i] = p.x, p.y, RASTRO_VIDA
+    if p.dash_t % 3 == 0 then explode(p.x + 8, p.y + 8, p.cor, 1) end
   else
     local v = VEL * mod("vel") * (p.cpu and dif.vel or 1)
     if p.escudo or carregando then v = v * 0.5 end
@@ -629,7 +640,8 @@ local function atualiza_tiros()
   for i = 1, MAX_TIROS do
     local t = tiros[i]
     if t.ativo then
-      t.x, t.y = t.x + t.dir * t.v, t.y + t.vy
+      local e = t.dono == 2 and escala_tiros or 1
+      t.x, t.y = t.x + t.dir * t.v * e, t.y + t.vy * e
       if t.x < -20 or t.x > W + 20 or t.y < YMIN - 8 or t.y > YMAX + 20 then t.ativo = false end
       -- laser apaga tiros inimigos no caminho
       if t.ativo and t.laser then
@@ -836,6 +848,7 @@ end
 
 tut_fim = function()
   tut_limpa()
+  escala_tiros = 1
   PROG.tut = true
   fase, evento, msg_t = "normal", nil, 0
   est_tiros, est_acertos, est_falhas, est_patches, est_frames = 0, 0, 0, 0, 0
@@ -845,6 +858,7 @@ end
 
 local function tut_sucesso()
   local p = players[1]
+  escala_tiros = 1
   explode(p.x + 8, p.y + 8, VERDE, 16)
   tut_pausa = 50
   tut_limpa()
@@ -936,8 +950,13 @@ atualiza_tutorial = function()
       end
     end
   elseif passo == "escudo" or passo == "dash" then
+    escala_tiros = 1
+    if passo == "dash" and tut_parede_on and p.dash_t == 0 and not tut_hit then
+      local dist = tut_wx - (p.x + p.w)
+      if dist > -4 and dist < 70 then escala_tiros = 0.15 end   -- camera lenta: a hora e agora
+    end
     if tut_parede_on then
-      tut_wx = tut_wx - tut_wv
+      tut_wx = tut_wx - tut_wv * escala_tiros
       if tut_wx < p.x - 12 then
         tut_parede_on, tut_t = false, 0
         if not tut_hit then
@@ -1022,6 +1041,13 @@ desenha_tutorial = function()
   if (passo == "escudo" or passo == "dash") and tut_pausa == 0 then
     ui.trisfill(W - 4, H / 2 - 14, W - 4, H / 2 + 14, W - 20, H / 2, T.cor2)
     if not tut_parede_on and tut_t > 30 then circ(W - 12, H / 2, (tut_t - 30) // 3, passo == "dash" and BRANCO or T.cor2) end
+  end
+  -- dash: na camera lenta, setas ">>" na frente da nave apontando para a parede
+  if passo == "dash" and escala_tiros < 1 and (frame // 4) % 2 == 0 then
+    for k = 0, 1 do
+      local ax = p.x + p.w + 6 + k * 9
+      ui.trisfill(ax, p.y + 2, ax, p.y + 14, ax + 7, p.y + 8, BRANCO)
+    end
   end
   -- falha: borda roxa piscando enquanto os controles estao invertidos
   if passo == "debug" and fase == "ativo" and (frame // 6) % 2 == 0 then
@@ -1308,7 +1334,7 @@ local function desenha_vitoria()
 end
 
 reset()
-estado = "titulo"   -- reset() prepara a partida (e entra em contagem); no boot comecamos no titulo
+historia_comeca()   -- ao ligar: historia -> tutorial -> partida, sem parar no titulo
 
 function update()
   le_botoes()
@@ -1396,6 +1422,21 @@ function update()
     shake = shake - 1
   end
 
+  -- rastro do dash: ecos da nave encolhendo e esfriando de cor (branco -> cor da nave -> cinza)
+  for _, p in ipairs(players) do
+    if not (p.cpu and estado == "tutorial") then
+      for k = 1, RASTRO_N do
+        local tt = p.rastro_t[k]
+        if tt and tt > 0 then
+          local tam = 4 + tt // 2
+          local c = tt > RASTRO_VIDA - 6 and BRANCO or (tt > 8 and p.cor or CINZA)
+          local gx, gy = p.rastro_x[k] + 8, p.rastro_y[k] + 8
+          if p.dir == 1 then ui.trisfill(gx - tam, gy - tam, gx - tam, gy + tam, gx + tam, gy, c)
+          else ui.trisfill(gx + tam, gy - tam, gx + tam, gy + tam, gx - tam, gy, c) end
+        end
+      end
+    end
+  end
   for _, p in ipairs(players) do
     if p.vidas > 0 and not (p.cpu and estado == "tutorial") and (p.hit == 0 or (frame // 3) % 2 == 0) then
       local spr = T.forma == "nave" and NAVE_SPR[p.id]
