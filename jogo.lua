@@ -26,23 +26,26 @@ local ACAO = "acao"          -- em menus: B, A ou START confirmam
 -- START/SELECT no console: as docs nao listam constante. Usa a do firmware se existir; senao o numero
 -- descoberto no "radar" da tela de pausa (aperte START la e veja qual numero acende) colocado aqui:
 local START_CONSOLE, SELECT_CONSOLE = 6, nil   -- START = 6 (descoberto no radar do console em 2026-10-15)
-local B_TIRO, B_LASER, B_ESCUDO, B_DEBUG, B_DASH, B_LEQUE, BTN_START, BTN_SELECT
+-- Papeis: os ombros (L/R) derrubam o FPS no console quando apertados (firmware), entao so fazem acao rara.
+-- B tiro | A toque = leque, segura = laser | Y escudo | X dash | L ou R cancela falha | START pausa
+local B_TIRO, B_LASER, B_ESCUDO, B_OMBRO_L, B_DASH, B_OMBRO_R, BTN_START, BTN_SELECT
+local A_TOQUE = 10           -- soltar A antes disso = leque; segurar mais = carrega o laser
 if CONSOLE then
-  B_TIRO, B_LASER, B_ESCUDO, B_DEBUG, B_DASH, B_LEQUE = BTN_Z, BTN_G, BTN_F, BTN_X, BTN_Q, BTN_E
+  B_TIRO, B_LASER, B_ESCUDO, B_DASH, B_OMBRO_L, B_OMBRO_R = BTN_Z, BTN_G, BTN_F, BTN_X, BTN_Q, BTN_E
   BTN_START = rawget(_G, "BTN_START") or rawget(_G, "START") or START_CONSOLE
   BTN_SELECT = rawget(_G, "BTN_SELECT") or rawget(_G, "SELECT") or SELECT_CONSOLE
 else
-  B_TIRO, B_LASER, B_ESCUDO, B_DEBUG, B_DASH, B_LEQUE = BTN_Z, 6, BTN_E, BTN_Q, BTN_F, BTN_G
+  B_TIRO, B_LASER, B_ESCUDO, B_DASH, B_OMBRO_L, B_OMBRO_R = BTN_Z, 6, BTN_E, BTN_Q, BTN_F, BTN_G
   BTN_START, BTN_SELECT = 15, 13
 end
 -- textos de ajuda conforme a plataforma
 local AJUDA = CONSOLE and {
-  "direcional move   B tiro", "A segura: LASER   Y escudo   R leque",
-  "L dash   X DEBUG: cancela a falha", "L+R juntos: pausa", "B: comecar", "B revanche   Y: titulo",
+  "direcional move   B tiro", "A toque: leque, segura: laser   Y escudo",
+  "X dash   L/R: cancela a falha", "L+R juntos: pausa", "B: comecar", "B revanche   Y: titulo",
   "L+R ou B continua", "Y volta ao titulo",
 } or {
-  "direcional/WASD move   B/K tiro", "A/J segura: LASER   Y/M escudo   R/H leque",
-  "L/G dash   X/L DEBUG: cancela a falha", "START pausa   SELECT sai", "B/K: comecar",
+  "direcional/WASD move   B/K tiro", "A/J toque: leque, segura: laser   Y/M escudo",
+  "X/L dash   G/H: cancela a falha", "START pausa   SELECT sai", "B/K: comecar",
   "B/K revanche   Y/M ou SELECT: titulo", "START ou B/K continua", "Y/M ou SELECT: titulo",
 }
 AJUDA[9] = "cima/baixo: dificuldade   " .. AJUDA[5]
@@ -289,7 +292,7 @@ for i = 1, 24 do estrelas[i] = { x = math.random(0, W), y = math.random(0, H), v
 local BOTOES, b_ant, b_now = {}, {}, {}
 local function add_botao(b) if b ~= nil then BOTOES[#BOTOES + 1] = b end end
 add_botao(UP); add_botao(DOWN); add_botao(LEFT); add_botao(RIGHT)
-add_botao(B_TIRO); add_botao(B_LASER); add_botao(B_ESCUDO); add_botao(B_DEBUG); add_botao(B_DASH); add_botao(B_LEQUE)
+add_botao(B_TIRO); add_botao(B_LASER); add_botao(B_ESCUDO); add_botao(B_OMBRO_L); add_botao(B_DASH); add_botao(B_OMBRO_R)
 add_botao(BTN_START); add_botao(BTN_SELECT)
 local function le_botoes()   -- 1x por frame, no inicio do update
   for i = 1, #BOTOES do
@@ -306,7 +309,7 @@ end
 local function segurando(b) return b ~= nil and b_now[b] == true end
 -- START no SDK; no console (sem START) L+R juntos
 local function apertou_pausa()
-  return apertou(BTN_START) or (segurando(B_DASH) and segurando(B_LEQUE) and (apertou(B_DASH) or apertou(B_LEQUE)))
+  return apertou(BTN_START) or (segurando(B_OMBRO_L) and segurando(B_OMBRO_R) and (apertou(B_OMBRO_L) or apertou(B_OMBRO_R)))
 end
 local function volta_titulo() return apertou(B_ESCUDO) or apertou(BTN_SELECT) end
 -- contorno de circulo: ui.circ no console, ui.draw_circle no SDK 1.1.0
@@ -371,7 +374,7 @@ local function novo_player(id, x, cor, dir)
            dash_t = 0, dash_dx = 0, dash_dy = 0, dash_cd = 0, leque_cd = 0, debug = 0,
            -- so a CPU usa: parametros atuais da IA e estado da decisao
            cpu = id == 2, reacao = 0, erro = 0, desvio = 0, cont = 0, alvo_y = H / 2 - 8, quer_atirar = false,
-           escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0, debug_neg = 0, dash_neg = 0, leque_neg = 0 }
+           escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0, debug_neg = 0, dash_neg = 0, leque_neg = 0, a_t = 0 }
 end
 
 -- Reinicia so a rodada (vidas, posicoes, tiros, eventos); mantem placar e o ajuste da IA.
@@ -382,7 +385,7 @@ nova_rodada = function()
     p.x = i == 1 and 30 or W - 46
     p.cont, p.quer_atirar, p.alvo_y = 0, false, p.y
     p.energia, p.escudo, p.quebrado, p.carga, p.laser_cd = ESC_MAX, false, false, 0, 0
-    p.dash_t, p.dash_cd, p.leque_cd, p.escudo_t, p.carregando = 0, 0, 0, 0, 0
+    p.dash_t, p.dash_cd, p.leque_cd, p.escudo_t, p.carregando, p.a_t = 0, 0, 0, 0, 0, 0
     p.desv_t, p.desv_dir = 0, 0
     p.debug = p.cpu and dif.debug or DEBUG_CARGAS
   end
@@ -542,14 +545,19 @@ local function le_controle(p)
   if segurando(UP) then dy = dy - 1 end
   if segurando(DOWN) then dy = dy + 1 end
   if fase == "ativo" and evento.inv then dx, dy = -dx, -dy end
-  local laser, carregando = false, false
-  if segurando(B_LASER) and p.laser_cd <= 0 then
-    p.carga, carregando = math.min(CARGA_MAX, p.carga + 1), true
-  elseif p.carga > 0 then
-    laser, p.carga = p.carga >= CARGA_MIN, 0
+  -- A: toque curto = leque (ao soltar); segurando alem de A_TOQUE carrega o laser (dispara ao soltar)
+  local laser, carregando, leque = false, false, false
+  if segurando(B_LASER) then
+    p.a_t = p.a_t + 1
+    if p.a_t > A_TOQUE and p.laser_cd <= 0 then p.carga, carregando = math.min(CARGA_MAX, p.carga + 1), true end
+  else
+    if p.a_t > 0 then
+      if p.a_t <= A_TOQUE then leque = true elseif p.carga >= CARGA_MIN then laser = true end
+    end
+    p.a_t, p.carga = 0, 0
   end
-  return dx, dy, apertou(B_TIRO), segurando(B_ESCUDO), apertou(B_DASH), apertou(B_LEQUE),
-         laser, carregando, apertou(B_DEBUG)
+  return dx, dy, apertou(B_TIRO), segurando(B_ESCUDO), apertou(B_DASH), leque,
+         laser, carregando, apertou(B_OMBRO_L) or apertou(B_OMBRO_R)
 end
 
 local function atualiza_player(p)
@@ -816,7 +824,7 @@ do
 -- desenhado embaixo com o botao certo pulsando. Errar nao pune: a nave pisca e o obstaculo repete.
 -- Roda sozinho na 1a partida apos ligar; no titulo, Y repete; pausa (START / L+R) pula.
 local TUT_PASSOS = { "mover", "tiro", "escudo", "dash", "leque", "laser", "debug" }
-local TUT_BOTAO = { mover = "dpad", tiro = "B", escudo = "Y", dash = "L", leque = "R", laser = "A", debug = "X" }
+local TUT_BOTAO = { mover = "dpad", tiro = "B", escudo = "Y", dash = "X", leque = "A", laser = "A", debug = "L" }
 local TUT_PAREDES = 2          -- paredes que precisa atravessar sem ser atingido (escudo e dash)
 local TUT_JANELA = 12          -- frames para matar o trio do leque antes de ele se regenerar
 local tut_i, tut_t, tut_cont, tut_pausa, tut_janela = 1, 0, 0, 0, 0
@@ -1276,14 +1284,14 @@ do
   -- tabela de controles em 2 colunas: { rotulo, cor do botao no Super Famicom, acao }
   local CTRL = CONSOLE and {
     { "dir", BRANCO, "mover" },        { "B", AMAR, "tiro" },
-    { "A", VERM, "segura: laser" },    { "Y", VERDE, "escudo" },
-    { "L", CINZA, "dash" },            { "R", CINZA, "leque (3 tiros)" },
-    { "X", AZUL, "cancela falha" },  { "START", BRANCO, "pausa" },
+    { "A", VERM, "toque: leque" },     { "A", VERM, "segura: laser" },
+    { "Y", VERDE, "escudo" },          { "X", AZUL, "dash" },
+    { "L/R", CINZA, "cancela falha" }, { "START", BRANCO, "pausa" },
   } or {
     { "WASD", BRANCO, "mover" },       { "B/K", AMAR, "tiro" },
-    { "A/J", VERM, "segura: laser" },  { "Y/M", VERDE, "escudo" },
-    { "L/G", CINZA, "dash" },          { "R/H", CINZA, "leque (3 tiros)" },
-    { "X/L", AZUL, "cancela falha" }, { "START", BRANCO, "pausa" },
+    { "A/J", VERM, "toque: leque" },   { "A/J", VERM, "segura: laser" },
+    { "Y/M", VERDE, "escudo" },        { "X/L", AZUL, "dash" },
+    { "G/H", CINZA, "cancela falha" }, { "START", BRANCO, "pausa" },
   }
   local function painel(y1, y2, titulo)
     ui.rect(X1, y1, X2, y2, ESCURO)
@@ -1490,7 +1498,7 @@ function update()
       if not PROG.hist then historia_comeca() elseif not PROG.tut then tut_comeca() end
     elseif apertou(B_ESCUDO) then
       reset(); tut_comeca()
-    elseif apertou(B_DEBUG) then
+    elseif apertou(B_DASH) then
       reset(); historia_comeca()
     end
     return
