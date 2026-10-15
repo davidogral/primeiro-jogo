@@ -39,6 +39,7 @@ local AJUDA = CONSOLE and {
   "L/G dash   X/L DEBUG: cancela a falha", "START pausa   SELECT sai", "B/K: comecar",
   "B/K revanche   Y/M ou SELECT: titulo", "START ou B/K continua", "Y/M ou SELECT: titulo",
 }
+AJUDA[9] = "cima/baixo: dificuldade   " .. AJUDA[5]
 local VIDAS = 3
 local VEL, VEL_TIRO, RECARGA = 3, 6, 18
 local AVISO_FRAMES = 90                       -- 1.5s de aviso
@@ -55,7 +56,7 @@ local DASH_T, DASH_VEL, DASH_CD = 10, 8, 75
 local LEQUE_CD, LEQUE_VY = 90, 1.5
 local DEBUG_CARGAS = 1                        -- DEBUGs do jogador por rodada
 -- Evento CHUVA DE ASTEROIDES (sprites src/asteroides/*.png, Space Shooter Redux por Kenney, CC0)
-local MAX_AST, AST_SPAWN = 14, 9              -- pool e frames entre asteroides
+local MAX_AST, AST_SPAWN = 10, 9              -- pool e frames entre asteroides
 local AST_TIPOS = {                           -- tam = lado do PNG (console nao informa), raio = hitbox
   { nome = "meteorGrey_med1",   tam = 43, raio = 16, vel = 1.6, hp = 3 },
   { nome = "meteorGrey_small1", tam = 28, raio = 11, vel = 2.3, hp = 2 },
@@ -82,6 +83,7 @@ local DIFICULDADES = {
               vel = 1.5, rec = 0.5, tiro = 1.5, vidas = 6, faixa = 0.05, bloqueado = true },
 }
 local ORDEM_DIF = { "facil", "medio", "dificil", "critico" }
+for _, d in pairs(DIFICULDADES) do d.sel, d.desbloq = "> " .. d.nome .. " <", d.nome .. " DESBLOQUEADO" end
 local DIF_INICIAL = 2
 local AJUSTE = 0.15          -- adaptativo: +-15% por vida perdida a favor de quem perde
 local CONFUSAO = 30          -- frames que a CPU anda errado no inicio do "inverte"
@@ -166,6 +168,24 @@ local TEMAS = {
 }
 local T = TEMAS[TEMA_ATUAL]
 
+-- Textos montados 1x no load (concatenar dentro do update gera lixo para o GC todo frame)
+for k, e in pairs(EVENTOS) do
+  local nome = (T.nomes and T.nomes[k]) or e.nome
+  e.txt_ativo = "<< " .. nome .. " >>"
+  e.txt_aviso = { nome .. " EM 1", nome .. " EM 2", nome .. " EM 3" }
+end
+local TXT_PLACAR, TXT_FINAL = {}, {}
+for a = 0, 2 do for b = 0, 2 do
+  TXT_PLACAR[a * 3 + b] = a .. " x " .. b
+  TXT_FINAL[a * 3 + b] = "placar final " .. a .. " x " .. b
+end end
+local TXT_RODADA = { "RODADA 1", "RODADA 2", "RODADA 3" }
+local TXT_VS = "VOCE vs " .. T.nome2
+
+-- ================= DESEMPENHO =================
+-- GC geracional: o lixo de vida curta e limpo em passos pequenos (sem engasgo no ESP32).
+pcall(collectgarbage, "generational")
+
 -- ================= ESTADO =================
 local estado = "titulo"
 local dif_idx, dif, hud2 = DIF_INICIAL, nil, ""
@@ -179,7 +199,7 @@ local placar, rodada, cont_t = { 0, 0 }, 1, 0
 local TXT_CONT = { "1", "2", "3" }
 local fase, timer, evento, prox_evento
 
-local MAX_TIROS, MAX_PART = 40, 60
+local MAX_TIROS, MAX_PART = 24, 40   -- dimensionado pelo uso real (2 naves x ~10 tiros vivos)
 local tiros, parts = {}, {}
 for i = 1, MAX_TIROS do tiros[i] = { ativo = false, x = 0, y = 0, dir = 0, dono = 0, v = 0, vy = 0, w = 5, h = 5, laser = false } end
 for i = 1, MAX_PART do parts[i] = { vida = 0, x = 0, y = 0, vx = 0, vy = 0, cor = 0 } end
@@ -675,11 +695,11 @@ local function desenha_evento()
       ui.rect(0, 0, W - 1, H - 1, c); ui.rect(2, 2, W - 3, H - 3, c)
       centro(T.aviso, 115, AMAR)
     end
-    centro(nome_ev(prox_evento) .. " EM " .. (timer // 60 + 1), 135, c)
+    centro(prox_evento.txt_aviso[timer // 60 + 1] or "", 135, c)
   elseif fase == "ativo" then
     local c = evento.cor
     for k = 0, 2 do ui.rect(k, k, W - 1 - k, H - 1 - k, c) end
-    centro("<< " .. nome_ev(evento) .. " >>", 30, c)
+    centro(evento.txt_ativo, 30, c)
     local larg = math.floor((timer / evento.dur) * 120)
     ui.rectfill(MEIO - 60, 18, MEIO - 60 + larg, 20, c)
   end
@@ -806,7 +826,7 @@ local function desenha_vitoria()
       centro("VOCE VENCEU O IMPOSSIVEL", 196, (t // 6) % 2 == 0 and AMAR or LARANJA)
     elseif novo_desbloq then
       centro("...mas algo pior despertou:", 194, VERM)
-      if (t // 8) % 2 == 0 then centro(DIFICULDADES.critico.nome .. " DESBLOQUEADO", 206, VERM) end
+      if (t // 8) % 2 == 0 then centro(DIFICULDADES.critico.desbloq, 206, VERM) end
       glitch_linhas(0.2, VERM, ROXO)
     end
     if (t // 30) % 2 == 0 then centro(AJUDA[6], 240, BRANCO) end
@@ -833,7 +853,7 @@ function update()
 
   if estado == "titulo" then
     centro(T.titulo, 34, AMAR)
-    centro("VOCE vs " .. T.nome2, 48, T.cor2)
+    centro(TXT_VS, 48, T.cor2)
     centro(AJUDA[1], 68, BRANCO)
     centro(AJUDA[2], 80, BRANCO)
     centro(AJUDA[3], 92, BRANCO)
@@ -848,13 +868,13 @@ function update()
         centro("??? BLOQUEADO: venca o DIFICIL ???", y, CINZA)
       else
         local cor = i == dif_idx and (d.bloqueado and VERM or AMAR) or CINZA
-        centro(i == dif_idx and ("> " .. d.nome .. " <") or d.nome, y, cor)
+        centro(i == dif_idx and d.sel or d.nome, y, cor)
       end
     end
     centro(DIFICULDADES[ORDEM_DIF[dif_idx]].desc, 200, ROXO)
     centro("naves: Cozy Space Ships por Bramble & Byte (CC-BY 4.0)", 248, CINZA)
     centro("asteroides: Space Shooter Redux por Kenney (CC0)", 258, CINZA)
-    if (frame // 30) % 2 == 0 then centro("cima/baixo: dificuldade   " .. AJUDA[5], 222, VERDE) end
+    if (frame // 30) % 2 == 0 then centro(AJUDA[9], 222, VERDE) end
     if apertou(ACAO) then reset() end
     return
   end
@@ -940,14 +960,19 @@ function update()
   if estado == "jogo" then desenha_evento() end
   if msg_t > 0 then centro(msg_txt, 60, AMAR) end
   if estado == "pausa" then
-    ui.rectfill(MEIO - 110, 100, MEIO + 110, 160, ESCURO); ui.rect(MEIO - 110, 100, MEIO + 110, 160, BRANCO)
+    ui.rectfill(MEIO - 110, 100, MEIO + 110, 182, ESCURO); ui.rect(MEIO - 110, 100, MEIO + 110, 182, BRANCO)
     centro("PAUSA", 110, AMAR)
     centro(AJUDA[7], 128, BRANCO)
     centro(AJUDA[8], 142, CINZA)
+    -- medidor de desempenho (so na pausa): FPS e memoria do console (ui.stat) ou do Lua
+    local fps = ui.stat and ui.stat(7)
+    local mem = ui.stat and ui.stat(0) or collectgarbage("count") * 1024
+    ui.print(string.format("FPS %s  MEM %dKB  LUA %dKB", fps and tostring(math.floor(fps)) or "-",
+      math.floor(mem / 1024), math.floor(collectgarbage("count"))), MEIO - 100, 170, CINZA)
   end
-  centro(placar[1] .. " x " .. placar[2], 6, BRANCO)
+  centro(TXT_PLACAR[placar[1] * 3 + placar[2]] or "", 6, BRANCO)
   if estado == "contagem" then
-    centro("RODADA " .. rodada, 105, AMAR)
+    centro(TXT_RODADA[rodada] or "", 105, AMAR)
     if cont_t > CONTAGEM_JA then
       ui.rect(MEIO - 14, 122, MEIO + 14, 146, BRANCO)
       centro(TXT_CONT[(cont_t - CONTAGEM_JA - 1) // CONTAGEM_PASSO + 1], 130, BRANCO)
@@ -961,6 +986,6 @@ function update()
 
   if estado == "fim" then
     centro(vencedor == 1 and "VOCE VENCEU!" or "CPU VENCEU!", 115, vencedor == 1 and T.cor1 or T.cor2)
-    centro("placar final " .. placar[1] .. " x " .. placar[2], 130, AMAR)
+    centro(TXT_FINAL[placar[1] * 3 + placar[2]] or "", 130, AMAR)
   end
 end
