@@ -105,6 +105,16 @@ local function aplica_paleta()
   for i = 2, #PAL do ui.palset(BASE + i - 1, PAL[i]) end
 end
 aplica_paleta()
+-- Reaplicar as ~61 cores todo frame custava 61 comandos/frame no chip de video. Agora: paleta inteira
+-- nos primeiros frames e depois uma fatia de PAL_FATIA cores por frame (tudo de novo a cada ~8 frames).
+local PAL_FATIA, pal_pos, pal_total = 8, 0, #SPR_PAL + #PAL - 1
+local function paleta_fatia()
+  for _ = 1, PAL_FATIA do
+    pal_pos = pal_pos % pal_total + 1
+    if pal_pos <= #SPR_PAL then ui.palset(pal_pos - 1, SPR_PAL[pal_pos])
+    else local k = pal_pos - #SPR_PAL + 1; ui.palset(BASE + k - 1, PAL[k]) end
+  end
+end
 local PRETO = 0   -- indice 0 = transparente (fundo preto)
 local BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD, MARROM, BEGE =
   BASE + 1, BASE + 2, BASE + 3, BASE + 4, BASE + 5, BASE + 6, BASE + 7, BASE + 8, BASE + 9, BASE + 10, BASE + 11, BASE + 12
@@ -117,14 +127,10 @@ local NAVE_SPR, NAVE_TAM = {}, 24   -- sparrow 1x = 24x24
 if Sprites and Sprites.naves then NAVE_SPR[1], NAVE_SPR[2] = Sprites.naves["sparrow-cream"], Sprites.naves["sparrow-slate"] end
 -- Projeteis (Cozy Space Ships, CC-BY 4.0): plasma 4 quadros de 10x10 lado a lado (1x),
 -- desenhado com clip para mostrar 1 quadro; laser vertical 6x18 (2x) na parede do tutorial.
-local PLASMA, LASER_V = {}, nil
-local PLASMA_Q = 10
 -- No console o plasma animado (clip + spr por tiro, todo frame) pesava e travava com muitos tiros
 -- (leque, tutorial): la o tiro e desenhado em codigo, sem clip. A animacao por sprite fica so no SDK.
-if Sprites and Sprites.projeteis then
-  if not CONSOLE then PLASMA[1], PLASMA[2] = Sprites.projeteis["plasma-teal-4f"], Sprites.projeteis["plasma-rose-4f"] end
-  LASER_V = Sprites.projeteis["laser-rose"]
-end
+-- Sprites de projetil (plasma e laser-rose) travavam o console ao spammar o tiro e na parede do
+-- tutorial: todos os tiros sao desenhados em codigo. (PNGs de projeteis nao sao mais usados.)
 local cam_dx, cam_dy = 0, 0   -- deslocamento do shake (o clip e em coordenada de tela)
 local escala_tiros = 1        -- camera lenta dos tiros do virus (usada no tutorial do dash)
 local AST_SPR = {}   -- sem o PNG, o asteroide vira um circulo
@@ -221,7 +227,7 @@ local asts = {}
 for i = 1, MAX_AST do asts[i] = { ativo = false, x = 0, y = 0, vx = 0, vy = 0, tipo = 1, hp = 0 } end
 
 local estrelas = {}
-for i = 1, 40 do estrelas[i] = { x = math.random(0, W), y = math.random(0, H), v = math.random(1, 3) } end
+for i = 1, 24 do estrelas[i] = { x = math.random(0, W), y = math.random(0, H), v = math.random(1, 3) } end
 
 -- ================= UTIL =================
 -- "Recem-apertado" calculado aqui com ui.btn (agora e nao no frame anterior). Nao usamos ui.btnp:
@@ -235,7 +241,8 @@ local function le_botoes()   -- 1x por frame, no inicio do update
   for i = 1, #BOTOES do
     local b = BOTOES[i]
     b_ant[b] = b_now[b] or false
-    b_now[b] = ui.btn(b, PAD1) and true or false
+    local v = ui.btn(b, PAD1)   -- console devolve false ou pressao 0-255: 0 NAO conta como apertado
+    b_now[b] = v == true or (type(v) == "number" and v > 0)
   end
 end
 local function apertou(b)
@@ -692,7 +699,7 @@ local function desenha_fundo()
   elseif T.fundo == "chao" then
     for y = 40, H, 30 do ui.line(0, y, W, y, CINZA) end
   end
-  for y = 24, YMAX, 12 do ui.line(MEIO, y, MEIO, y + 5, CINZA) end
+  for y = 24, YMAX, 24 do ui.line(MEIO, y, MEIO, y + 7, CINZA) end
   -- FALHA NO SISTEMA: faixas de glitch quando um evento esta vindo/ativo (e de leve no titulo)
   local critico = ORDEM_DIF[dif_idx] == "critico"
   if T.glitch and (fase ~= "normal" or estado == "titulo" or critico) and math.random() < (fase == "normal" and (critico and 0.3 or 0.15) or 0.5) then
@@ -1348,7 +1355,7 @@ historia_comeca()   -- ao ligar: historia -> tutorial -> partida, sem parar no t
 function update()
   le_botoes()
   frame = frame + 1
-  aplica_paleta()
+  if frame <= 3 then aplica_paleta() else paleta_fatia() end
   ui.clip(0, 0, W, H)
   ui.camera(0, 0)
   if estado == "gameover" then desenha_gameover(); return end
@@ -1473,20 +1480,12 @@ function update()
     local t = tiros[i]
     if t.ativo then
       local c = t.dono == 1 and T.cor1 or T.cor2
-      local pl = PLASMA[t.dono]
-      if t.laser and t.h > t.w and LASER_V then          -- parede de laser vertical (tutorial)
-        ui.spr(LASER_V, t.x + 1, t.y)
+      if t.laser and t.h > t.w then                      -- parede de laser vertical (tutorial)
+        ui.rectfill(t.x + 1, t.y, t.x + 6, t.y + t.h, c); ui.rectfill(t.x + 3, t.y + 2, t.x + 4, t.y + t.h - 2, BRANCO)
       elseif t.laser then
         ui.rectfill(t.x, t.y, t.x + t.w, t.y + t.h, c); ui.rectfill(t.x, t.y + 2, t.x + t.w, t.y + t.h - 2, BRANCO)
-      elseif pl and T.forma == "nave" then               -- plasma animado: janela de 10x10 sobre a tira de 4 quadros
-        local qx, qy = math.floor(t.x + t.w / 2 - PLASMA_Q / 2), math.floor(t.y + t.h / 2 - PLASMA_Q / 2)
-        ui.clip(qx - cam_dx, qy - cam_dy, PLASMA_Q, PLASMA_Q)
-        ui.spr(pl, qx - ((frame // 8 + i) % 4) * PLASMA_Q, qy)
-        ui.clip(0, 0, W, H)
       elseif T.forma == "nave" then                      -- plasma em codigo: bola pulsando com miolo branco
-        local cx, cy = t.x + 2, t.y + 2
-        ui.circfill(cx, cy, 3 + (frame // 4 + i) % 2, c)
-        ui.circfill(cx, cy, 1, BRANCO)
+        ui.circfill(t.x + 2, t.y + 2, 2 + (frame // 4 + i) % 2, (frame // 3 + i) % 3 == 0 and BRANCO or c)
       else forma(T.tiro_forma, t.x, t.y, 5, 5, c, t.dir) end
     end
   end
@@ -1516,8 +1515,14 @@ function update()
     -- medidor de desempenho (so na pausa): FPS e memoria do console (ui.stat) ou do Lua
     local fps = ui.stat and ui.stat(7)
     local mem = ui.stat and ui.stat(0) or collectgarbage("count") * 1024
-    ui.print(string.format("FPS %s  MEM %dKB  LUA %dKB", fps and tostring(math.floor(fps)) or "-",
-      math.floor(mem / 1024), math.floor(collectgarbage("count"))), MEIO - 100, 170, CINZA)
+    ui.print(string.format("FPS %s  MEM %dKB  LUA %dKB  FW %s", fps and tostring(math.floor(fps)) or "-",
+      math.floor(mem / 1024), math.floor(collectgarbage("count")), CONSOLE and "CONSOLE" or "SDK"), MEIO - 104, 160, CINZA)
+    -- botoes lidos como apertados agora (diagnostico de controle)
+    local bx = MEIO - 100
+    for i = 1, #BOTOES do
+      local b = BOTOES[i]
+      ui.rectfill(bx + (i - 1) * 17, 172, bx + (i - 1) * 17 + 12, 178, b_now[b] and VERDE or CINZA)
+    end
   end
   centro(TXT_PLACAR[placar[1] * 3 + placar[2]] or "", 6, BRANCO)
   if estado == "contagem" then
