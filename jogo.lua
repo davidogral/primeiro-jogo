@@ -25,7 +25,7 @@ local PAD1 = 0
 local ACAO = "acao"          -- em menus: B, A ou START confirmam
 -- START/SELECT no console: as docs nao listam constante. Usa a do firmware se existir; senao o numero
 -- descoberto no "radar" da tela de pausa (aperte START la e veja qual numero acende) colocado aqui:
-local START_CONSOLE, SELECT_CONSOLE = nil, nil
+local START_CONSOLE, SELECT_CONSOLE = 6, nil   -- START = 6 (descoberto no radar do console em 2026-10-15)
 local B_TIRO, B_LASER, B_ESCUDO, B_DEBUG, B_DASH, B_LEQUE, BTN_START, BTN_SELECT
 if CONSOLE then
   B_TIRO, B_LASER, B_ESCUDO, B_DEBUG, B_DASH, B_LEQUE = BTN_Z, BTN_G, BTN_F, BTN_X, BTN_Q, BTN_E
@@ -840,6 +840,7 @@ local TUT_PAREDES = 2          -- paredes que precisa atravessar sem ser atingid
 local TUT_JANELA = 12          -- frames para matar o trio do leque antes de ele se regenerar
 local tut_i, tut_t, tut_cont, tut_pausa, tut_janela = 1, 0, 0, 0, 0
 local tut_wx, tut_wv, tut_parede_on, tut_hit = 0, 0, false, false
+local tut_dash_ok = false      -- parede no alcance do dash: mostra setas ">>"
 local MAX_ALVOS = 6
 local alvos = {}               -- tipo: 1 pacote de dados, 2 bug, 3 bloco blindado
 for i = 1, MAX_ALVOS do alvos[i] = { ativo = false, x = 0, y = 0, w = 0, h = 0, tipo = 1, by = 0, dx = 0 } end
@@ -1028,10 +1029,11 @@ atualiza_tutorial = function()
       end
     end
   elseif passo == "escudo" or passo == "dash" then
-    escala_tiros = 1
+    -- dash: sem camera lenta (o jogo segue normal); so marca a janela para desenhar as setas ">>"
+    tut_dash_ok = false
     if passo == "dash" and tut_parede_on and p.dash_t == 0 and not tut_hit then
       local dist = tut_wx - (p.x + p.w)
-      if dist > -4 and dist < 70 then escala_tiros = 0.15 end   -- camera lenta: a hora e agora
+      tut_dash_ok = dist > -4 and dist < 70
     end
     if tut_parede_on then
       tut_wx = tut_wx - tut_wv * escala_tiros
@@ -1121,7 +1123,7 @@ desenha_tutorial = function()
     if not tut_parede_on and tut_t > 30 then circ(W - 12, H / 2, (tut_t - 30) // 3, passo == "dash" and BRANCO or T.cor2) end
   end
   -- dash: na camera lenta, setas ">>" na frente da nave apontando para a parede
-  if passo == "dash" and escala_tiros < 1 and (frame // 4) % 2 == 0 then
+  if passo == "dash" and tut_dash_ok and (frame // 4) % 2 == 0 then
     for k = 0, 1 do
       local ax = p.x + p.w + 6 + k * 9
       ui.trisfill(ax, p.y + 2, ax, p.y + 14, ax + 7, p.y + 8, BRANCO)
