@@ -40,6 +40,7 @@ local AJUDA = CONSOLE and {
   "B/K revanche   Y/M ou SELECT: titulo", "START ou B/K continua", "Y/M ou SELECT: titulo",
 }
 AJUDA[9] = "cima/baixo: dificuldade   " .. AJUDA[5]
+AJUDA[10] = CONSOLE and "Y: tutorial" or "Y/M: tutorial"
 local VIDAS = 3
 local VEL, VEL_TIRO, RECARGA = 3, 6, 18
 local AVISO_FRAMES = 90                       -- 1.5s de aviso
@@ -647,7 +648,7 @@ local function desenha_fundo()
   elseif T.fundo == "chao" then
     for y = 40, H, 30 do ui.line(0, y, W, y, CINZA) end
   end
-  for y = 24, H, 12 do ui.line(MEIO, y, MEIO, y + 5, CINZA) end
+  for y = 24, YMAX, 12 do ui.line(MEIO, y, MEIO, y + 5, CINZA) end
   -- FALHA NO SISTEMA: faixas de glitch quando um evento esta vindo/ativo (e de leve no titulo)
   local critico = ORDEM_DIF[dif_idx] == "critico"
   if T.glitch and (fase ~= "normal" or estado == "titulo" or critico) and math.random() < (fase == "normal" and (critico and 0.3 or 0.15) or 0.5) then
@@ -703,6 +704,298 @@ local function desenha_evento()
     local larg = math.floor((timer / evento.dur) * 120)
     ui.rectfill(MEIO - 60, 18, MEIO - 60 + larg, 20, c)
   end
+end
+
+-- ================= TUTORIAL (estilo fase 1-1: sem texto, aprende fazendo) =================
+-- Cada obstaculo so se resolve com a mecanica que ensina. A unica "lingua" e um controle de SNES
+-- desenhado embaixo com o botao certo pulsando. Errar nao pune: a nave pisca e o obstaculo repete.
+-- Roda sozinho na 1a partida apos ligar; no titulo, Y repete; pausa (START / L+R) pula.
+local TUT_PASSOS = { "mover", "tiro", "escudo", "dash", "leque", "laser", "debug" }
+local TUT_BOTAO = { mover = "dpad", tiro = "B", escudo = "Y", dash = "L", leque = "R", laser = "A", debug = "X" }
+local TUT_PAREDES = 2          -- paredes que precisa atravessar sem ser atingido (escudo e dash)
+local TUT_JANELA = 12          -- frames para matar o trio do leque antes de ele se regenerar
+local tut_feito = false        -- vale ate desligar o console
+local tut_i, tut_t, tut_cont, tut_pausa, tut_janela = 1, 0, 0, 0, 0
+local tut_wx, tut_wv, tut_parede_on, tut_hit = 0, 0, false, false
+local MAX_ALVOS = 6
+local alvos = {}               -- tipo: 1 pacote de dados, 2 bug, 3 bloco blindado
+for i = 1, MAX_ALVOS do alvos[i] = { ativo = false, x = 0, y = 0, w = 0, h = 0, tipo = 1, by = 0, dx = 0 } end
+local TUT_PACOTES = { 70, 40, 70, 210, MEIO - 50, 128 }   -- x, y dos pacotes do passo "mover"
+
+local function tut_alvo(tipo, x, y, w, h)
+  for i = 1, MAX_ALVOS do
+    local a = alvos[i]
+    if not a.ativo then
+      a.ativo, a.tipo, a.x, a.y, a.w, a.h, a.by, a.dx = true, tipo, x, y, w, h, y, 0
+      return a
+    end
+  end
+end
+
+local function tut_limpa()
+  for i = 1, MAX_ALVOS do alvos[i].ativo = false end
+  for i = 1, MAX_TIROS do tiros[i].ativo = false end
+  tut_parede_on = false
+end
+
+local function tut_vivos()
+  local n = 0
+  for i = 1, MAX_ALVOS do if alvos[i].ativo then n = n + 1 end end
+  return n
+end
+
+-- trio do leque: fica sempre ~200px a frente da nave (distancia em que o leque abre +-50px)
+local function tut_trio()
+  local p = players[1]
+  local cy = ui.mid(YMIN + 52, p.y + p.h / 2, YMAX - 36)
+  for k = -1, 1 do
+    local a = tut_alvo(2, 0, cy + k * 50 - 9, 18, 18)
+    a.dx = 200
+  end
+  tut_janela = 0
+end
+
+local function tut_parede(laser)
+  for k = 0, 10 do
+    for i = 1, MAX_TIROS do
+      local t = tiros[i]
+      if not t.ativo then
+        t.ativo, t.dono, t.dir, t.vy, t.laser = true, 2, -1, 0, laser
+        t.w, t.h = laser and 8 or 6, laser and 18 or 6
+        t.v = laser and 3.5 or 2.2
+        t.x, t.y = W - 20, YMIN + k * 20
+        break
+      end
+    end
+  end
+  tut_wx, tut_wv, tut_parede_on, tut_hit = W - 20, laser and 3.5 or 2.2, true, false
+end
+
+local function tut_inicia_passo()
+  local p, passo = players[1], TUT_PASSOS[tut_i]
+  tut_limpa()
+  tut_t, tut_cont = 0, 0
+  p.energia, p.quebrado, p.laser_cd, p.dash_cd, p.leque_cd = ESC_MAX, false, 0, 0, 0
+  if passo == "mover" then
+    tut_alvo(1, TUT_PACOTES[1], TUT_PACOTES[2], 10, 10)
+  elseif passo == "tiro" then
+    tut_alvo(2, W - 110, 60, 16, 16); tut_alvo(2, W - 170, H / 2 - 8, 16, 16); tut_alvo(2, W - 110, 196, 16, 16)
+  elseif passo == "leque" then
+    tut_trio()
+  elseif passo == "laser" then
+    tut_alvo(3, W - 140, H / 2 - 16, 30, 30)
+  elseif passo == "debug" then
+    p.debug = 1
+    fase, evento, timer = "ativo", EVENTOS.inverte, 99999
+    shake = 10
+    tut_alvo(1, TUT_PACOTES[1], TUT_PACOTES[2], 10, 10)
+  end
+end
+
+local function tut_comeca()
+  tut_i, tut_pausa = 1, 0
+  local p = players[1]
+  p.x, p.y, p.hit = 30, H / 2 - 8, 0
+  estado = "tutorial"
+  tut_inicia_passo()
+end
+
+local function tut_fim()
+  tut_limpa()
+  tut_feito = true
+  fase, evento, msg_t = "normal", nil, 0
+  est_tiros, est_acertos, est_falhas, est_patches, est_frames = 0, 0, 0, 0, 0
+  explode(players[2].x + 8, players[2].y + 8, T.cor2, 20)   -- VIRUS.EXE "materializa"
+  nova_rodada()
+end
+
+local function tut_sucesso()
+  local p = players[1]
+  explode(p.x + 8, p.y + 8, VERDE, 16)
+  tut_pausa = 50
+  tut_limpa()
+end
+
+local function atualiza_tutorial()
+  local p, passo = players[1], TUT_PASSOS[tut_i]
+  msg_t = 0
+  atualiza_player(p)
+  tut_t = tut_t + 1
+
+  if tut_pausa > 0 then
+    tut_pausa = tut_pausa - 1
+    if tut_pausa == 0 then
+      if passo == "debug" then fase, evento = "normal", nil end
+      tut_i = tut_i + 1
+      if tut_i > #TUT_PASSOS then tut_fim() else tut_inicia_passo() end
+    end
+    return
+  end
+
+  -- tiros do virus x nave: dash atravessa, escudo bloqueia (menos laser), senao so pisca
+  for i = 1, MAX_TIROS do
+    local t = tiros[i]
+    if t.ativo and t.dono == 2 and t.x < p.x + p.w and t.x + t.w > p.x and t.y < p.y + p.h and t.y + t.h > p.y then
+      t.ativo = false
+      if p.dash_t > 0 then explode(t.x, t.y, BRANCO, 1)
+      elseif p.escudo and not t.laser then explode(t.x, t.y, AMAR, 2)
+      elseif p.hit == 0 then p.hit, shake, tut_hit = 30, 6, true end
+    end
+  end
+
+  -- tiros da nave x alvos
+  for i = 1, MAX_TIROS do
+    local t = tiros[i]
+    if t.ativo and t.dono == 1 then
+      for j = 1, MAX_ALVOS do
+        local a = alvos[j]
+        if a.ativo and a.tipo ~= 1 and t.x < a.x + a.w and t.x + t.w > a.x and t.y < a.y + a.h and t.y + t.h > a.y then
+          if a.tipo == 3 and not t.laser then
+            t.ativo = false; explode(t.x, t.y, AMAR, 3)          -- blindado: tiro comum ricocheteia
+          else
+            if not t.laser then t.ativo = false end
+            a.ativo = false
+            explode(a.x + a.w / 2, a.y + a.h / 2, a.tipo == 3 and BRANCO or VERM, a.tipo == 3 and 24 or 10)
+            if passo == "leque" and tut_janela == 0 then tut_janela = TUT_JANELA end
+          end
+        end
+      end
+    end
+  end
+
+  -- alvos: pacotes coletados pela nave, bugs balancando
+  for j = 1, MAX_ALVOS do
+    local a = alvos[j]
+    if a.ativo then
+      if a.tipo == 2 then
+        a.y = a.by + math.sin(frame * 0.05 + j) * (passo == "leque" and 0 or 10)
+        if a.dx > 0 then a.x = ui.mid(MEIO + 4, p.x + p.w + a.dx, W - a.w - 2) end
+      elseif a.tipo == 1 and a.x < p.x + p.w and a.x + a.w > p.x and a.y < p.y + p.h and a.y + a.h > p.y then
+        a.ativo = false
+        explode(a.x + 5, a.y + 5, VERDE, 8)
+        tut_cont = tut_cont + 1
+        if passo == "mover" and tut_cont < 3 then
+          tut_alvo(1, TUT_PACOTES[tut_cont * 2 + 1], TUT_PACOTES[tut_cont * 2 + 2], 10, 10)
+        elseif passo == "debug" then
+          tut_alvo(1, math.random(20, MEIO - 40), math.random(YMIN + 10, YMAX - 10), 10, 10)
+        end
+      end
+    end
+  end
+
+  -- regras de cada passo
+  if passo == "mover" then
+    if tut_cont >= 3 then tut_sucesso() end
+  elseif passo == "tiro" or passo == "laser" then
+    if tut_vivos() == 0 then tut_sucesso() end
+  elseif passo == "leque" then
+    if tut_janela > 0 then
+      tut_janela = tut_janela - 1
+      if tut_vivos() == 0 then tut_sucesso()
+      elseif tut_janela == 0 then           -- nao matou o trio junto: ele se regenera
+        for j = 1, MAX_ALVOS do
+          local a = alvos[j]
+          if a.ativo then explode(a.x + 9, a.y + 9, ROXO, 6); a.ativo = false end
+        end
+        shake = 4
+        tut_trio()
+      end
+    end
+  elseif passo == "escudo" or passo == "dash" then
+    if tut_parede_on then
+      tut_wx = tut_wx - tut_wv
+      if tut_wx < p.x - 12 then
+        tut_parede_on, tut_t = false, 0
+        if not tut_hit then
+          tut_cont = tut_cont + 1
+          explode(p.x + 8, p.y + 8, VERDE, 6)
+          if tut_cont >= TUT_PAREDES then tut_sucesso() end
+        end
+      end
+    elseif tut_t > 60 then
+      tut_parede(passo == "dash")
+    end
+  elseif passo == "debug" then
+    if fase == "normal" then tut_sucesso() end
+  end
+end
+
+-- controle de SNES desenhado; o botao `hl` pulsa nas cores do Super Famicom
+local ctl_hl, ctl_pisca = nil, false
+local function cor(nome, normal) return (ctl_hl == nome and ctl_pisca) and BRANCO or normal end
+local function desenha_controle(hl)
+  local cx, cy = MEIO, 255
+  local pisca = (frame // 6) % 2 == 0
+  ctl_hl, ctl_pisca = hl, pisca
+  ui.rectfill(cx - 26, cy - 15, cx - 6, cy - 12, cor("L", CINZA))
+  ui.rectfill(cx + 6, cy - 15, cx + 26, cy - 12, cor("R", CINZA))
+  ui.rectfill(cx - 30, cy - 11, cx + 30, cy + 11, ESCURO)
+  ui.circfill(cx - 30, cy, 11, ESCURO); ui.circfill(cx + 30, cy, 11, ESCURO)
+  local dp = cor("dpad", CINZA)
+  ui.rectfill(cx - 39, cy - 2, cx - 27, cy + 2, dp); ui.rectfill(cx - 35, cy - 6, cx - 31, cy + 6, dp)
+  local bx = cx + 33
+  ui.circfill(bx, cy - 6, 3, cor("X", AZUL)); ui.circfill(bx, cy + 6, 3, cor("B", AMAR))
+  ui.circfill(bx - 6, cy, 3, cor("Y", VERDE)); ui.circfill(bx + 6, cy, 3, cor("A", VERM))
+  if pisca then
+    if hl == "X" then circ(bx, cy - 6, 6, BRANCO) elseif hl == "B" then circ(bx, cy + 6, 6, BRANCO)
+    elseif hl == "Y" then circ(bx - 6, cy, 6, BRANCO) elseif hl == "A" then circ(bx + 6, cy, 6, BRANCO)
+    elseif hl == "dpad" then circ(cx - 33, cy, 9, BRANCO)
+    elseif hl == "L" then ui.rect(cx - 28, cy - 17, cx - 4, cy - 10, BRANCO)
+    elseif hl == "R" then ui.rect(cx + 4, cy - 17, cx + 28, cy - 10, BRANCO) end
+  end
+  -- segurar: barra embaixo enche enquanto o botao esta pressionado (A carrega, Y escudo)
+  local p = players[1]
+  if hl == "A" and p.carga > 0 then ui.rectfill(cx - 20, cy + 13, cx - 20 + math.floor(40 * p.carga / CARGA_MAX), cy + 14, p.carga >= CARGA_MIN and BRANCO or AMAR) end
+  if hl == "Y" and p.escudo then ui.rectfill(cx - 20, cy + 13, cx - 20 + math.floor(40 * p.energia / ESC_MAX), cy + 14, AMAR) end
+end
+
+local function desenha_tutorial()
+  local p, passo = players[1], TUT_PASSOS[tut_i]
+  -- progresso: um ponto por passo
+  for i = 1, #TUT_PASSOS do
+    local x = MEIO - (#TUT_PASSOS - 1) * 7 + (i - 1) * 14
+    if i < tut_i or (i == tut_i and tut_pausa > 0) then ui.circfill(x, 10, 3, VERDE)
+    elseif i == tut_i then circ(x, 10, 3, (frame // 10) % 2 == 0 and BRANCO or CINZA)
+    else circ(x, 10, 3, ESCURO) end
+  end
+  -- alvos
+  for j = 1, MAX_ALVOS do
+    local a = alvos[j]
+    if a.ativo then
+      if a.tipo == 1 then
+        local cx, cy, r = a.x + 5, a.y + 5, 5 + (frame // 8) % 2
+        ui.trisfill(cx, cy - r, cx - r, cy, cx + r, cy, VERDE); ui.trisfill(cx, cy + r, cx - r, cy, cx + r, cy, VERDE)
+        ui.circfill(cx, cy, 1, BRANCO)
+        if passo == "mover" then   -- trilha pontilhada da nave ate o pacote
+          local sx, sy = p.x + 8, p.y + 8
+          for k = 1, 5 do
+            local f = (k + (frame // 6) % 2 * 0.5) / 6
+            ui.rectfill(sx + (cx - sx) * f, sy + (cy - sy) * f, sx + (cx - sx) * f + 1, sy + (cy - sy) * f + 1, VERDE)
+          end
+        end
+      elseif a.tipo == 2 then
+        local gx = (math.random() < 0.1) and math.random(-2, 2) or 0
+        ui.rectfill(a.x + gx, a.y, a.x + a.w + gx, a.y + a.h, VERM)
+        ui.rectfill(a.x + 3, a.y + 3 + (frame // 5) % 6, a.x + a.w - 3, a.y + 5 + (frame // 5) % 6, ROXO)
+      else
+        ui.rectfill(a.x, a.y, a.x + a.w, a.y + a.h, CINZA)
+        ui.rect(a.x - 2, a.y - 2, a.x + a.w + 2, a.y + a.h + 2, BRANCO)
+        ui.rectfill(a.x + 10, a.y + 10, a.x + a.w - 10, a.y + a.h - 10, VERM)
+      end
+    end
+  end
+  -- emissor do virus nas paredes (carrega antes de disparar)
+  if (passo == "escudo" or passo == "dash") and tut_pausa == 0 then
+    ui.trisfill(W - 4, H / 2 - 14, W - 4, H / 2 + 14, W - 20, H / 2, T.cor2)
+    if not tut_parede_on and tut_t > 30 then circ(W - 12, H / 2, (tut_t - 30) // 3, passo == "dash" and BRANCO or T.cor2) end
+  end
+  -- falha: borda roxa piscando enquanto os controles estao invertidos
+  if passo == "debug" and fase == "ativo" and (frame // 6) % 2 == 0 then
+    ui.rect(0, 0, W - 1, H - 1, ROXO); ui.rect(2, 2, W - 3, H - 3, ROXO)
+  end
+  -- acerto: anel verde crescendo
+  if tut_pausa > 0 then circ(p.x + 8, p.y + 8, (50 - tut_pausa) * 2, VERDE) end
+  desenha_controle(TUT_BOTAO[passo])
 end
 
 -- ================= GAME OVER (tela azul) / VITORIA (antivirus) / BOOT =================
@@ -875,8 +1168,18 @@ function update()
     centro("naves: Cozy Space Ships por Bramble & Byte (CC-BY 4.0)", 248, CINZA)
     centro("asteroides: Space Shooter Redux por Kenney (CC0)", 258, CINZA)
     if (frame // 30) % 2 == 0 then centro(AJUDA[9], 222, VERDE) end
-    if apertou(ACAO) then reset() end
+    centro(AJUDA[10], 234, CINZA)
+    if apertou(ACAO) then
+      reset()
+      if not tut_feito then tut_comeca() end
+    elseif apertou(B_ESCUDO) then
+      reset(); tut_comeca()
+    end
     return
+  end
+
+  if estado == "tutorial" then
+    if apertou_pausa() then tut_fim() else atualiza_tutorial() end
   end
 
   if (estado == "jogo" or estado == "contagem") and apertou_pausa() then
@@ -911,7 +1214,7 @@ function update()
   end
 
   for _, p in ipairs(players) do
-    if p.vidas > 0 and (p.hit == 0 or (frame // 3) % 2 == 0) then
+    if p.vidas > 0 and not (p.cpu and estado == "tutorial") and (p.hit == 0 or (frame // 3) % 2 == 0) then
       local spr = T.forma == "nave" and NAVE_SPR[p.id]
       if spr then
         if (frame // 4) % 2 == 0 then   -- chama do motor atras do sprite
@@ -925,7 +1228,7 @@ function update()
         forma(T.forma, p.x, p.y, p.w, p.h, p.cor, p.dir)
       end
     end
-    if p.vidas > 0 then
+    if p.vidas > 0 and not (p.cpu and estado == "tutorial") then
       if p.escudo then circ(p.x + 8, p.y + 8, 13, AMAR) end
       local carga = p.cpu and (p.carregando > 0 and (CARGA_MIN - p.carregando) or 0) or p.carga
       if carga > 0 then
@@ -956,6 +1259,7 @@ function update()
   end
 
   ui.camera(0, 0)
+  if estado == "tutorial" then desenha_tutorial(); return end
   desenha_hud()
   if estado == "jogo" then desenha_evento() end
   if msg_t > 0 then centro(msg_txt, 60, AMAR) end
