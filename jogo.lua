@@ -75,8 +75,8 @@ local YMIN, YMAX = 24, 240                    -- area de jogo (embaixo fica o HU
 -- Habilidades
 local ESC_MAX, ESC_REGEN = 120, 0.4           -- escudo: energia (1/frame em uso) e regeneracao
 local CARGA_MIN, CARGA_MAX, LASER_CD = 30, 45, 150
-local DASH_T, DASH_VEL, DASH_CD = 12, 10, 75   -- dash: frames, velocidade inicial (freia ate 40%), recarga
-local RASTRO_N, RASTRO_VIDA = 12, 24           -- ecos da nave deixados pelo dash
+local DASH_T, DASH_VEL, DASH_CD = 12, 8, 75    -- dash: frames, velocidade (freia so ate 70%), recarga
+local RASTRO_N, RASTRO_VIDA = 6, 18            -- ecos do dash (1 a cada 2 frames, quadradinhos baratos)
 local LEQUE_CD, LEQUE_VY = 90, 1.5
 local DEBUG_CARGAS = 1                        -- DEBUGs do jogador por rodada
 -- Evento CHUVA DE ASTEROIDES (sprites src/asteroides/*.png, Space Shooter Redux por Kenney, CC0)
@@ -580,18 +580,18 @@ local function atualiza_player(p)
     if ddx == 0 and ddy == 0 then ddx = p.dir end
     if ddx ~= 0 and ddy ~= 0 then ddx, ddy = ddx * 0.7071, ddy * 0.7071 end
     p.dash_dx, p.dash_dy = ddx, ddy
-    explode(p.x + 8, p.y + 8, BRANCO, 4)
   end
   for k = 1, RASTRO_N do if p.rastro_t[k] and p.rastro_t[k] > 0 then p.rastro_t[k] = p.rastro_t[k] - 1 end end
 
   local y0 = p.y
   if p.dash_t > 0 then
-    local v = DASH_VEL * (0.4 + 0.6 * p.dash_t / DASH_T)   -- arranca rapido e freia suave
+    local v = DASH_VEL * (0.7 + 0.3 * p.dash_t / DASH_T)   -- quase constante: sem sensacao de "travar" no fim
     p.dash_t = p.dash_t - 1
     p.x, p.y = p.x + p.dash_dx * v, p.y + p.dash_dy * v
-    p.rastro_i = p.rastro_i % RASTRO_N + 1                 -- grava um eco por frame
-    p.rastro_x[p.rastro_i], p.rastro_y[p.rastro_i], p.rastro_t[p.rastro_i] = p.x, p.y, RASTRO_VIDA
-    if p.dash_t % 3 == 0 then explode(p.x + 8, p.y + 8, p.cor, 1) end
+    if p.dash_t % 2 == 0 then                               -- grava um eco a cada 2 frames
+      p.rastro_i = p.rastro_i % RASTRO_N + 1
+      p.rastro_x[p.rastro_i], p.rastro_y[p.rastro_i], p.rastro_t[p.rastro_i] = p.x, p.y, RASTRO_VIDA
+    end
   else
     local v = VEL * mod("vel") * (p.cpu and dif.vel or 1)
     if p.escudo or carregando then v = v * 0.5 end
@@ -754,7 +754,7 @@ local function desenha_fundo()
   elseif T.fundo == "chao" then
     for y = 40, H, 30 do ui.line(0, y, W, y, CINZA) end
   end
-  for y = 24, YMAX, 24 do ui.line(MEIO, y, MEIO, y + 7, CINZA) end
+  if estado ~= "titulo" then for y = 24, YMAX, 24 do ui.line(MEIO, y, MEIO, y + 7, CINZA) end end
   -- FALHA NO SISTEMA: faixas de glitch quando um evento esta vindo/ativo (e de leve no titulo)
   local critico = ORDEM_DIF[dif_idx] == "critico"
   if T.glitch and (fase ~= "normal" or estado == "titulo" or critico) and math.random() < (fase == "normal" and (critico and 0.3 or 0.15) or 0.5) then
@@ -766,45 +766,34 @@ local function desenha_fundo()
   end
 end
 
--- vida = navezinha 7x7 desenhada em codigo (bico para o lado em que a nave olha)
-local function mini_nave(x, y, dir, cor)
-  if dir == 1 then
-    ui.trisfill(x, y, x, y + 6, x + 7, y + 3, cor); ui.rectfill(x - 1, y + 2, x, y + 4, LARANJA)
-  else
-    ui.trisfill(x + 7, y, x + 7, y + 6, x, y + 3, cor); ui.rectfill(x + 7, y + 2, x + 8, y + 4, LARANJA)
+-- vidas = barra segmentada (cheios + vazios ate o maximo), centrada na altura do nome
+local function barra_vida(x, y, n, max, cor, dir)
+  for i = 1, max do
+    local sx = dir == 1 and (x + (i - 1) * 10) or (x - i * 10 + 2)
+    ui.rectfill(sx, y, sx + 7, y + 4, i <= n and cor or ESCURO)
   end
 end
 
 local function desenha_hud()
-  local n1 = T.nome1
-  ui.print(n1, 8, 6, T.cor1)
-  for i = 1, players[1].vidas do mini_nave(12 + #n1 * 6 + i * 10, 6, 1, T.cor1) end
-  local n2 = hud2
-  ui.print(n2, W - 8 - #n2 * 6, 6, T.cor2)
-  for i = 1, players[2].vidas do mini_nave(W - 14 - #n2 * 6 - i * 10, 6, -1, T.cor2) end
-  -- habilidades do jogador (embaixo, esquerda): Y escudo | A laser | L dash | R leque | X debug
+  local n1, n2 = T.nome1, hud2
+  ui.print(n1, 8, 5, T.cor1)
+  barra_vida(8 + #n1 * 6 + 8, 6, players[1].vidas, VIDAS, T.cor1, 1)
+  ui.print(n2, W - 8 - #n2 * 6, 5, T.cor2)
+  barra_vida(W - 8 - #n2 * 6 - 8, 6, players[2].vidas, dif.vidas, T.cor2, -1)
+  ui.line(0, 16, W, 16, ESCURO)
+  -- embaixo so o que carrega: Y escudo e A laser (jogador) e o escudo da CPU
   local p, y = players[1], H - 11
-  ui.print("Y", 6, y, BRANCO)
-  ui.rect(14, y, 54, y + 6, CINZA)
-  ui.rectfill(14, y, 14 + math.floor(40 * p.energia / ESC_MAX), y + 6, p.quebrado and CINZA or AZUL)
-  ui.print("A", 62, y, BRANCO)
-  ui.rect(70, y, 100, y + 6, CINZA)
-  if p.laser_cd > 0 then ui.rectfill(70, y, 70 + math.floor(30 * (1 - p.laser_cd / LASER_CD)), y + 6, CINZA)
-  else ui.rectfill(70, y, 70 + math.floor(30 * p.carga / CARGA_MAX), y + 6, p.carga >= CARGA_MIN and BRANCO or AMAR) end
-  local pisca = (frame // 4) % 2 == 0
-  ui.print("L", 108, y, BRANCO)
-  ui.rectfill(116, y, 122, y + 6, (p.dash_neg > 0 and pisca) and VERM or (p.dash_cd <= 0 and VERDE or CINZA))
-  ui.print("R", 130, y, BRANCO)
-  ui.rectfill(138, y, 144, y + 6, (p.leque_neg > 0 and pisca) and VERM or (p.leque_cd <= 0 and VERDE or CINZA))
-  local xneg = p.debug_neg > 0 and (frame // 4) % 2 == 0
-  local xpronto = p.debug > 0 and fase ~= "normal"           -- ha falha para cancelar: X acende
-  ui.print("X", 152, y, xneg and VERM or (xpronto and ((frame // 8) % 2 == 0 and AMAR or BRANCO) or BRANCO))
-  ui.print(TXT_NUM[p.debug] or "+", 160, y, xneg and VERM or (p.debug > 0 and AMAR or CINZA))
-  -- escudo da CPU (embaixo, direita)
+  ui.print("Y", 8, y, VERDE)
+  ui.rect(18, y, 70, y + 6, ESCURO)
+  ui.rectfill(18, y, 18 + math.floor(52 * p.energia / ESC_MAX), y + 6, p.quebrado and CINZA or AZUL)
+  ui.print("A", 82, y, VERM)
+  ui.rect(92, y, 144, y + 6, ESCURO)
+  if p.laser_cd > 0 then ui.rectfill(92, y, 92 + math.floor(52 * (1 - p.laser_cd / LASER_CD)), y + 6, CINZA)
+  else ui.rectfill(92, y, 92 + math.floor(52 * p.carga / CARGA_MAX), y + 6, p.carga >= CARGA_MIN and BRANCO or AMAR) end
   local c = players[2]
-  ui.rect(W - 54, y, W - 14, y + 6, CINZA)
-  ui.rectfill(W - 54, y, W - 54 + math.floor(40 * c.energia / ESC_MAX), y + 6, c.quebrado and CINZA or T.cor2)
-  ui.print("Y", W - 10, y, BRANCO)
+  ui.rect(W - 70, y, W - 18, y + 6, ESCURO)
+  ui.rectfill(W - 70, y, W - 70 + math.floor(52 * c.energia / ESC_MAX), y + 6, c.quebrado and CINZA or T.cor2)
+  ui.print("Y", W - 14, y, VERDE)
 end
 
 local function desenha_evento()
@@ -1288,6 +1277,69 @@ end
 
 end -- historia
 
+-- ================= MENU (titulo) =================
+local desenha_titulo
+do
+  local X1, X2 = MEIO - 124, MEIO + 124
+  -- tabela de controles em 2 colunas: { rotulo, cor do botao no Super Famicom, acao }
+  local CTRL = CONSOLE and {
+    { "dir", BRANCO, "mover" },        { "B", AMAR, "tiro" },
+    { "A", VERM, "segura: laser" },    { "Y", VERDE, "escudo" },
+    { "L", CINZA, "dash" },            { "R", CINZA, "leque (3 tiros)" },
+    { "X", AZUL, "cancela falha" },  { "START", BRANCO, "pausa" },
+  } or {
+    { "WASD", BRANCO, "mover" },       { "B/K", AMAR, "tiro" },
+    { "A/J", VERM, "segura: laser" },  { "Y/M", VERDE, "escudo" },
+    { "L/G", CINZA, "dash" },          { "R/H", CINZA, "leque (3 tiros)" },
+    { "X/L", AZUL, "cancela falha" }, { "START", BRANCO, "pausa" },
+  }
+  local function painel(y1, y2, titulo)
+    ui.rect(X1, y1, X2, y2, ESCURO)
+    if titulo then
+      local tx = math.floor(W / 2 - #titulo * 3)
+      ui.rectfill(tx - 4, y1 - 3, tx + #titulo * 6 + 2, y1 + 4, PRETO)
+      ui.print(titulo, tx, y1 - 3, CINZA)
+    end
+  end
+  desenha_titulo = function()
+    if T.subtitulo then
+      desenha_logo(10, 3, (frame // 90) % 8 == 0 and VERM or AMAR, ROXO)
+      centro(T.subtitulo, 36, ROXO)
+    else centro(T.titulo, 30, AMAR) end
+    centro(TXT_VS, 47, T.cor2)
+    -- painel de dificuldade
+    painel(62, 150, "DIFICULDADE")
+    for i = 1, #ORDEM_DIF do
+      local d = DIFICULDADES[ORDEM_DIF[i]]
+      local y = 74 + (i - 1) * 14
+      if d.bloqueado and not desbloqueado then
+        centro("??? venca o DIFICIL ???", y, CINZA)
+      else
+        if i == dif_idx then
+          ui.rectfill(X1 + 8, y - 3, X2 - 8, y + 9, ESCURO)
+          ui.trisfill(X1 + 14, y, X1 + 14, y + 6, X1 + 18, y + 3, AMAR)
+          ui.trisfill(X2 - 14, y, X2 - 14, y + 6, X2 - 18, y + 3, AMAR)
+        end
+        centro(d.nome, y, i == dif_idx and (d.bloqueado and VERM or AMAR) or CINZA)
+      end
+    end
+    centro(DIFICULDADES[ORDEM_DIF[dif_idx]].desc, 134, ROXO)
+    -- painel de controles (2 colunas alinhadas)
+    painel(160, 214, "CONTROLES")
+    for i = 1, #CTRL do
+      local e = CTRL[i]
+      local col, lin = (i - 1) % 2, (i - 1) // 2
+      local x, y = col == 0 and X1 + 12 or MEIO + 14, 168 + lin * 11
+      ui.print(e[1], x, y, e[2])
+      ui.print(e[3], x + 38, y, BRANCO)
+    end
+    if (frame // 30) % 2 == 0 then centro(AJUDA[9], 222, VERDE) end
+    centro(AJUDA[10], 234, CINZA)
+    centro("naves: Cozy Space Ships por Bramble & Byte (CC-BY 4.0)", 250, CINZA)
+    centro("asteroides: Space Shooter Redux por Kenney (CC0)", 259, CINZA)
+  end
+end
+
 -- ================= GAME OVER (tela azul) / VITORIA (antivirus) / BOOT =================
 local term, term_cor = {}, {}      -- linhas do terminal: montadas 1x quando a partida acaba
 local go_t, go_pronto = 0, 0
@@ -1437,33 +1489,10 @@ function update()
   desenha_fundo()
 
   if estado == "titulo" then
-    if T.subtitulo then
-      desenha_logo(8, 3, (frame // 90) % 8 == 0 and VERM or AMAR, ROXO)
-      centro(T.subtitulo, 34, ROXO)
-    else centro(T.titulo, 34, AMAR) end
-    centro(TXT_VS, 48, T.cor2)
-    centro(AJUDA[1], 68, BRANCO)
-    centro(AJUDA[2], 80, BRANCO)
-    centro(AJUDA[3], 92, BRANCO)
-    centro(AJUDA[4], 104, CINZA)
     local max_idx = desbloqueado and #ORDEM_DIF or #ORDEM_DIF - 1
     if apertou(UP) then dif_idx = math.max(1, dif_idx - 1) end
     if apertou(DOWN) then dif_idx = math.min(max_idx, dif_idx + 1) end
-    for i = 1, #ORDEM_DIF do
-      local d = DIFICULDADES[ORDEM_DIF[i]]
-      local y = 118 + i * 14
-      if d.bloqueado and not desbloqueado then
-        centro("??? BLOQUEADO: venca o DIFICIL ???", y, CINZA)
-      else
-        local cor = i == dif_idx and (d.bloqueado and VERM or AMAR) or CINZA
-        centro(i == dif_idx and d.sel or d.nome, y, cor)
-      end
-    end
-    centro(DIFICULDADES[ORDEM_DIF[dif_idx]].desc, 200, ROXO)
-    centro("naves: Cozy Space Ships por Bramble & Byte (CC-BY 4.0)", 248, CINZA)
-    centro("asteroides: Space Shooter Redux por Kenney (CC0)", 258, CINZA)
-    if (frame // 30) % 2 == 0 then centro(AJUDA[9], 222, VERDE) end
-    centro(AJUDA[10], 234, CINZA)
+    desenha_titulo()
     if apertou(ACAO) then
       reset()
       if not PROG.hist then historia_comeca() elseif not PROG.tut then tut_comeca() end
@@ -1519,11 +1548,10 @@ function update()
       for k = 1, RASTRO_N do
         local tt = p.rastro_t[k]
         if tt and tt > 0 then
-          local tam = 4 + tt // 2
-          local c = tt > RASTRO_VIDA - 6 and BRANCO or (tt > 8 and p.cor or CINZA)
+          local tam = 1 + tt // 3
+          local c = tt > RASTRO_VIDA - 5 and BRANCO or (tt > 6 and p.cor or CINZA)
           local gx, gy = p.rastro_x[k] + 8, p.rastro_y[k] + 8
-          if p.dir == 1 then ui.trisfill(gx - tam, gy - tam, gx - tam, gy + tam, gx + tam, gy, c)
-          else ui.trisfill(gx + tam, gy - tam, gx + tam, gy + tam, gx - tam, gy, c) end
+          ui.rectfill(gx - tam, gy - tam, gx + tam, gy + tam, c)   -- quadrado: o desenho mais barato
         end
       end
     end
@@ -1601,7 +1629,7 @@ function update()
       ui.print(tostring(id), x + (id < 10 and 3 or 0), 182, on and VERDE or CINZA)
     end
   end
-  centro(TXT_PLACAR[placar[1] * 3 + placar[2]] or "", 6, BRANCO)
+  centro(TXT_PLACAR[placar[1] * 3 + placar[2]] or "", 5, BRANCO)
   if estado == "contagem" then
     centro(TXT_RODADA[rodada] or "", 105, AMAR)
     if cont_t > CONTAGEM_JA then
