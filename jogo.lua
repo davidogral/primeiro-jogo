@@ -119,8 +119,10 @@ if Sprites and Sprites.naves then NAVE_SPR[1], NAVE_SPR[2] = Sprites.naves["spar
 -- desenhado com clip para mostrar 1 quadro; laser vertical 6x18 (2x) na parede do tutorial.
 local PLASMA, LASER_V = {}, nil
 local PLASMA_Q = 10
+-- No console o plasma animado (clip + spr por tiro, todo frame) pesava e travava com muitos tiros
+-- (leque, tutorial): la o tiro e desenhado em codigo, sem clip. A animacao por sprite fica so no SDK.
 if Sprites and Sprites.projeteis then
-  PLASMA[1], PLASMA[2] = Sprites.projeteis["plasma-teal-4f"], Sprites.projeteis["plasma-rose-4f"]
+  if not CONSOLE then PLASMA[1], PLASMA[2] = Sprites.projeteis["plasma-teal-4f"], Sprites.projeteis["plasma-rose-4f"] end
   LASER_V = Sprites.projeteis["laser-rose"]
 end
 local cam_dx, cam_dy = 0, 0   -- deslocamento do shake (o clip e em coordenada de tela)
@@ -309,7 +311,7 @@ local function novo_player(id, x, cor, dir)
            rastro_x = {}, rastro_y = {}, rastro_t = {}, rastro_i = 0,
            -- so a CPU usa: parametros atuais da IA e estado da decisao
            cpu = id == 2, reacao = 0, erro = 0, desvio = 0, cont = 0, alvo_y = H / 2 - 8, quer_atirar = false,
-           escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0, debug_neg = 0 }
+           escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0, debug_neg = 0, dash_neg = 0, leque_neg = 0 }
 end
 
 -- Reinicia so a rodada (vidas, posicoes, tiros, eventos); mantem placar e o ajuste da IA.
@@ -507,6 +509,9 @@ local function atualiza_player(p)
 
   -- L: dash na direcao segurada (diagonais valem); sem direcao = para frente. Invencivel durante.
   if p.dash_cd > 0 then p.dash_cd = p.dash_cd - 1 end
+  if p.dash_neg > 0 then p.dash_neg = p.dash_neg - 1 end
+  if p.leque_neg > 0 then p.leque_neg = p.leque_neg - 1 end
+  if dash and (p.dash_cd > 0 or p.dash_t > 0) then p.dash_neg = 20 end   -- apertou recarregando: HUD pisca vermelho
   if dash and p.dash_cd <= 0 and p.dash_t <= 0 then
     p.dash_t, p.dash_cd = DASH_T, DASH_CD
     local ddx, ddy = dx, dy
@@ -547,6 +552,7 @@ local function atualiza_player(p)
     p.quer_atirar = false
   end
   -- R: leque
+  if leque and p.leque_cd > 0 then p.leque_neg = 20 end
   if leque and p.leque_cd <= 0 then
     atirar(p, -LEQUE_VY, false); atirar(p, 0, false); atirar(p, LEQUE_VY, false)
     p.leque_cd = math.floor(LEQUE_CD * mod("rec") * (p.cpu and dif.rec or 1))
@@ -717,8 +723,11 @@ local function desenha_hud()
   ui.rect(70, y, 100, y + 6, CINZA)
   if p.laser_cd > 0 then ui.rectfill(70, y, 70 + math.floor(30 * (1 - p.laser_cd / LASER_CD)), y + 6, CINZA)
   else ui.rectfill(70, y, 70 + math.floor(30 * p.carga / CARGA_MAX), y + 6, p.carga >= CARGA_MIN and BRANCO or AMAR) end
-  ui.print("L", 108, y, BRANCO); ui.rectfill(116, y, 122, y + 6, p.dash_cd <= 0 and VERDE or CINZA)
-  ui.print("R", 130, y, BRANCO); ui.rectfill(138, y, 144, y + 6, p.leque_cd <= 0 and VERDE or CINZA)
+  local pisca = (frame // 4) % 2 == 0
+  ui.print("L", 108, y, BRANCO)
+  ui.rectfill(116, y, 122, y + 6, (p.dash_neg > 0 and pisca) and VERM or (p.dash_cd <= 0 and VERDE or CINZA))
+  ui.print("R", 130, y, BRANCO)
+  ui.rectfill(138, y, 144, y + 6, (p.leque_neg > 0 and pisca) and VERM or (p.leque_cd <= 0 and VERDE or CINZA))
   local xneg = p.debug_neg > 0 and (frame // 4) % 2 == 0
   local xpronto = p.debug > 0 and fase ~= "normal"           -- ha falha para cancelar: X acende
   ui.print("X", 152, y, xneg and VERM or (xpronto and ((frame // 8) % 2 == 0 and AMAR or BRANCO) or BRANCO))
@@ -1474,6 +1483,10 @@ function update()
         ui.clip(qx - cam_dx, qy - cam_dy, PLASMA_Q, PLASMA_Q)
         ui.spr(pl, qx - ((frame // 8 + i) % 4) * PLASMA_Q, qy)
         ui.clip(0, 0, W, H)
+      elseif T.forma == "nave" then                      -- plasma em codigo: bola pulsando com miolo branco
+        local cx, cy = t.x + 2, t.y + 2
+        ui.circfill(cx, cy, 3 + (frame // 4 + i) % 2, c)
+        ui.circfill(cx, cy, 1, BRANCO)
       else forma(T.tiro_forma, t.x, t.y, 5, 5, c, t.dir) end
     end
   end
