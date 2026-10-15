@@ -22,9 +22,14 @@ local TEMA_ATUAL = "falha"    -- falha | padrao | espaco | faroeste | magia
 local CONSOLE = BTN_X ~= nil
 local PAD1 = 0
 local ACAO = "acao"          -- em menus: B, A ou START confirmam
+-- START/SELECT no console: as docs nao listam constante. Usa a do firmware se existir; senao o numero
+-- descoberto no "radar" da tela de pausa (aperte START la e veja qual numero acende) colocado aqui:
+local START_CONSOLE, SELECT_CONSOLE = nil, nil
 local B_TIRO, B_LASER, B_ESCUDO, B_DEBUG, B_DASH, B_LEQUE, BTN_START, BTN_SELECT
 if CONSOLE then
   B_TIRO, B_LASER, B_ESCUDO, B_DEBUG, B_DASH, B_LEQUE = BTN_Z, BTN_G, BTN_F, BTN_X, BTN_Q, BTN_E
+  BTN_START = rawget(_G, "BTN_START") or rawget(_G, "START") or START_CONSOLE
+  BTN_SELECT = rawget(_G, "BTN_SELECT") or rawget(_G, "SELECT") or SELECT_CONSOLE
 else
   B_TIRO, B_LASER, B_ESCUDO, B_DEBUG, B_DASH, B_LEQUE = BTN_Z, 6, BTN_E, BTN_Q, BTN_F, BTN_G
   BTN_START, BTN_SELECT = 15, 13
@@ -41,6 +46,22 @@ local AJUDA = CONSOLE and {
 }
 AJUDA[9] = "cima/baixo: dificuldade   " .. AJUDA[5]
 AJUDA[10] = CONSOLE and "Y: tutorial   X: historia" or "Y/M: tutorial   X/L: historia"
+if CONSOLE and BTN_START then AJUDA[4], AJUDA[7] = "START (ou L+R) pausa", "START ou B continua" end
+AJUDA[11] = BTN_START and (CONSOLE and "START pula" or "START/L+R pula") or "L+R pula"
+-- "ja fez o tutorial" sobrevive ao desligar se o console deixar gravar arquivo (tudo protegido por pcall)
+local SAVE = "falha_no_sistema.sav"
+local function save_le()
+  local ok, r = pcall(function()
+    local f = io.open(SAVE, "r")
+    if not f then return false end
+    local txt = f:read("a"); f:close()
+    return txt ~= nil and txt:find("tut=1") ~= nil
+  end)
+  return ok and r == true
+end
+local function save_grava()
+  pcall(function() local f = io.open(SAVE, "w"); if f then f:write("tut=1\n"); f:close() end end)
+end
 local VIDAS = 3
 local VEL, VEL_TIRO, RECARGA = 3, 6, 18
 local AVISO_FRAMES = 90                       -- 1.5s de aviso
@@ -105,16 +126,6 @@ local function aplica_paleta()
   for i = 2, #PAL do ui.palset(BASE + i - 1, PAL[i]) end
 end
 aplica_paleta()
--- Reaplicar as ~61 cores todo frame custava 61 comandos/frame no chip de video. Agora: paleta inteira
--- nos primeiros frames e depois uma fatia de PAL_FATIA cores por frame (tudo de novo a cada ~8 frames).
-local PAL_FATIA, pal_pos, pal_total = 8, 0, #SPR_PAL + #PAL - 1
-local function paleta_fatia()
-  for _ = 1, PAL_FATIA do
-    pal_pos = pal_pos % pal_total + 1
-    if pal_pos <= #SPR_PAL then ui.palset(pal_pos - 1, SPR_PAL[pal_pos])
-    else local k = pal_pos - #SPR_PAL + 1; ui.palset(BASE + k - 1, PAL[k]) end
-  end
-end
 local PRETO = 0   -- indice 0 = transparente (fundo preto)
 local BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD, MARROM, BEGE =
   BASE + 1, BASE + 2, BASE + 3, BASE + 4, BASE + 5, BASE + 6, BASE + 7, BASE + 8, BASE + 9, BASE + 10, BASE + 11, BASE + 12
@@ -766,7 +777,7 @@ end
 -- Tutorial e historia ficam em blocos do...end para nao estourar o limite de 200 locais do Lua;
 -- so as funcoes usadas fora sao exportadas. PROG guarda o que ja foi visto (vale ate desligar).
 local tut_comeca, tut_fim, atualiza_tutorial, desenha_tutorial, historia_comeca, atualiza_historia
-local PROG = { tut = false, hist = false }
+local PROG = { tut = false, hist = false, ja_fez = save_le() }   -- ja_fez: tutorial concluido alguma vez
 
 -- ================= TUTORIAL (estilo fase 1-1: sem texto, aprende fazendo) =================
 do
@@ -865,6 +876,7 @@ end
 tut_fim = function()
   tut_limpa()
   escala_tiros = 1
+  if not PROG.ja_fez then PROG.ja_fez = true; save_grava() end
   PROG.tut = true
   fase, evento, msg_t = "normal", nil, 0
   est_tiros, est_acertos, est_falhas, est_patches, est_frames = 0, 0, 0, 0, 0
@@ -1072,6 +1084,13 @@ desenha_tutorial = function()
   -- acerto: anel verde crescendo
   if tut_pausa > 0 then circ(p.x + 8, p.y + 8, (50 - tut_pausa) * 2, VERDE) end
   desenha_controle(TUT_BOTAO[passo])
+  if PROG.ja_fez then   -- quem ja fez o tutorial ve como pular
+    local txt = AJUDA[11]
+    local x = W - 14 - #txt * 6
+    ui.rectfill(x - 4, 4, W - 6, 15, ESCURO)
+    ui.print(txt, x, 6, (frame // 20) % 2 == 0 and BRANCO or CINZA)
+    ui.trisfill(W - 13, 6, W - 13, 13, W - 9, 9, BRANCO)
+  end
 end
 
 end -- tutorial
@@ -1208,6 +1227,7 @@ atualiza_historia = function()
     if n2 > 0 then ui.print(n2 >= #cena.l2 and cena.l2 or string.sub(cena.l2, 1, n2), 28, 234, VERDE) end
     if completo and (frame // 20) % 2 == 0 then ui.trisfill(W - 34, 246, W - 26, 246, W - 30, 251, VERDE) end
   end
+  ui.print(AJUDA[11], 8, 6, CINZA)
   -- cenas ja vistas: pontinhos
   for i = 1, #HIST do
     if i <= h_cena then ui.circfill(W - 20 - (#HIST - i) * 8, 10, 2, i == h_cena and BRANCO or CINZA) end
@@ -1355,7 +1375,7 @@ historia_comeca()   -- ao ligar: historia -> tutorial -> partida, sem parar no t
 function update()
   le_botoes()
   frame = frame + 1
-  if frame <= 3 then aplica_paleta() else paleta_fatia() end
+  aplica_paleta()   -- INTEIRA todo frame: em fatias a tela piscou preto no console (ele precisa da paleta toda a cada frame)
   ui.clip(0, 0, W, H)
   ui.camera(0, 0)
   if estado == "gameover" then desenha_gameover(); return end
@@ -1508,7 +1528,7 @@ function update()
   if estado == "jogo" then desenha_evento() end
   if msg_t > 0 then centro(msg_txt, 60, AMAR) end
   if estado == "pausa" then
-    ui.rectfill(MEIO - 110, 100, MEIO + 110, 182, ESCURO); ui.rect(MEIO - 110, 100, MEIO + 110, 182, BRANCO)
+    ui.rectfill(MEIO - 120, 100, MEIO + 120, 194, ESCURO); ui.rect(MEIO - 120, 100, MEIO + 120, 194, BRANCO)
     centro("PAUSA", 110, AMAR)
     centro(AJUDA[7], 128, BRANCO)
     centro(AJUDA[8], 142, CINZA)
@@ -1517,11 +1537,13 @@ function update()
     local mem = ui.stat and ui.stat(0) or collectgarbage("count") * 1024
     ui.print(string.format("FPS %s  MEM %dKB  LUA %dKB  FW %s", fps and tostring(math.floor(fps)) or "-",
       math.floor(mem / 1024), math.floor(collectgarbage("count")), CONSOLE and "CONSOLE" or "SDK"), MEIO - 104, 160, CINZA)
-    -- botoes lidos como apertados agora (diagnostico de controle)
-    local bx = MEIO - 100
-    for i = 1, #BOTOES do
-      local b = BOTOES[i]
-      ui.rectfill(bx + (i - 1) * 17, 172, bx + (i - 1) * 17 + 12, 178, b_now[b] and VERDE or CINZA)
+    -- radar de botoes: numero cru 0..15 acende quando apertado (descobrir START/SELECT no console)
+    for id = 0, 15 do
+      local ok, v = pcall(ui.btn, id, PAD1)
+      local on = ok and (v == true or (type(v) == "number" and v > 0))
+      local x = MEIO - 112 + id * 14
+      ui.rectfill(x, 172, x + 10, 178, on and VERDE or (ok and CINZA or VERM))
+      ui.print(tostring(id), x + (id < 10 and 3 or 0), 182, on and VERDE or CINZA)
     end
   end
   centro(TXT_PLACAR[placar[1] * 3 + placar[2]] or "", 6, BRANCO)
