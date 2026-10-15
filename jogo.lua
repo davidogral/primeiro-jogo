@@ -75,8 +75,7 @@ local YMIN, YMAX = 24, 240                    -- area de jogo (embaixo fica o HU
 -- Habilidades
 local ESC_MAX, ESC_REGEN = 120, 0.4           -- escudo: energia (1/frame em uso) e regeneracao
 local CARGA_MIN, CARGA_MAX, LASER_CD = 30, 45, 150
-local DASH_T, DASH_VEL, DASH_CD = 12, 8, 75    -- dash: frames, velocidade (freia so ate 70%), recarga
-local RASTRO_N, RASTRO_VIDA = 6, 18            -- ecos do dash (1 a cada 2 frames, quadradinhos baratos)
+local DASH_T, DASH_VEL, DASH_CD = 12, 7, 75    -- dash simples: 12 frames (janela de invencibilidade) a 7px constantes, recarga
 local LEQUE_CD, LEQUE_VY = 90, 1.5
 local DEBUG_CARGAS = 1                        -- DEBUGs do jogador por rodada
 -- Evento CHUVA DE ASTEROIDES (sprites src/asteroides/*.png, Space Shooter Redux por Kenney, CC0)
@@ -370,7 +369,6 @@ local function novo_player(id, x, cor, dir)
            -- habilidades
            energia = ESC_MAX, escudo = false, quebrado = false, carga = 0, laser_cd = 0,
            dash_t = 0, dash_dx = 0, dash_dy = 0, dash_cd = 0, leque_cd = 0, debug = 0,
-           rastro_x = {}, rastro_y = {}, rastro_t = {}, rastro_i = 0,
            -- so a CPU usa: parametros atuais da IA e estado da decisao
            cpu = id == 2, reacao = 0, erro = 0, desvio = 0, cont = 0, alvo_y = H / 2 - 8, quer_atirar = false,
            escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0, debug_neg = 0, dash_neg = 0, leque_neg = 0 }
@@ -581,17 +579,11 @@ local function atualiza_player(p)
     if ddx ~= 0 and ddy ~= 0 then ddx, ddy = ddx * 0.7071, ddy * 0.7071 end
     p.dash_dx, p.dash_dy = ddx, ddy
   end
-  for k = 1, RASTRO_N do if p.rastro_t[k] and p.rastro_t[k] > 0 then p.rastro_t[k] = p.rastro_t[k] - 1 end end
 
   local y0 = p.y
   if p.dash_t > 0 then
-    local v = DASH_VEL * (0.7 + 0.3 * p.dash_t / DASH_T)   -- quase constante: sem sensacao de "travar" no fim
     p.dash_t = p.dash_t - 1
-    p.x, p.y = p.x + p.dash_dx * v, p.y + p.dash_dy * v
-    if p.dash_t % 2 == 0 then                               -- grava um eco a cada 2 frames
-      p.rastro_i = p.rastro_i % RASTRO_N + 1
-      p.rastro_x[p.rastro_i], p.rastro_y[p.rastro_i], p.rastro_t[p.rastro_i] = p.x, p.y, RASTRO_VIDA
-    end
+    p.x, p.y = p.x + p.dash_dx * DASH_VEL, p.y + p.dash_dy * DASH_VEL
   else
     local v = VEL * mod("vel") * (p.cpu and dif.vel or 1)
     if p.escudo or carregando then v = v * 0.5 end
@@ -1542,18 +1534,12 @@ function update()
     shake = shake - 1
   end
 
-  -- rastro do dash: ecos da nave encolhendo e esfriando de cor (branco -> cor da nave -> cinza)
+  -- dash: so 2 linhas de velocidade atras da nave enquanto dura (sem historico, sem loop extra)
   for _, p in ipairs(players) do
-    if not (p.cpu and estado == "tutorial") then
-      for k = 1, RASTRO_N do
-        local tt = p.rastro_t[k]
-        if tt and tt > 0 then
-          local tam = 1 + tt // 3
-          local c = tt > RASTRO_VIDA - 5 and BRANCO or (tt > 6 and p.cor or CINZA)
-          local gx, gy = p.rastro_x[k] + 8, p.rastro_y[k] + 8
-          ui.rectfill(gx - tam, gy - tam, gx + tam, gy + tam, c)   -- quadrado: o desenho mais barato
-        end
-      end
+    if p.dash_t > 0 and not (p.cpu and estado == "tutorial") then
+      local cx, cy = p.x + 8, p.y + 8
+      local bx, by = cx - p.dash_dx * 28, cy - p.dash_dy * 28
+      ui.line(cx, cy - 4, bx, by - 4, BRANCO); ui.line(cx, cy + 4, bx, by + 4, p.cor)
     end
   end
   for _, p in ipairs(players) do
