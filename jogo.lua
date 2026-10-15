@@ -114,6 +114,15 @@ local BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD, 
 pcall(require, "sprites")
 local NAVE_SPR, NAVE_TAM = {}, 24   -- sparrow 1x = 24x24
 if Sprites and Sprites.naves then NAVE_SPR[1], NAVE_SPR[2] = Sprites.naves["sparrow-cream"], Sprites.naves["sparrow-slate"] end
+-- Projeteis (Cozy Space Ships, CC-BY 4.0): plasma 4 quadros de 10x10 lado a lado (1x),
+-- desenhado com clip para mostrar 1 quadro; laser vertical 6x18 (2x) na parede do tutorial.
+local PLASMA, LASER_V = {}, nil
+local PLASMA_Q = 10
+if Sprites and Sprites.projeteis then
+  PLASMA[1], PLASMA[2] = Sprites.projeteis["plasma-teal-4f"], Sprites.projeteis["plasma-rose-4f"]
+  LASER_V = Sprites.projeteis["laser-rose"]
+end
+local cam_dx, cam_dy = 0, 0   -- deslocamento do shake (o clip e em coordenada de tela)
 local AST_SPR = {}   -- sem o PNG, o asteroide vira um circulo
 if Sprites and Sprites.asteroides then
   for i = 1, #AST_TIPOS do AST_SPR[i] = Sprites.asteroides[AST_TIPOS[i].nome] end
@@ -211,11 +220,25 @@ local estrelas = {}
 for i = 1, 40 do estrelas[i] = { x = math.random(0, W), y = math.random(0, H), v = math.random(1, 3) } end
 
 -- ================= UTIL =================
+-- "Recem-apertado" calculado aqui com ui.btn (agora e nao no frame anterior). Nao usamos ui.btnp:
+-- no console ele repete enquanto segura (estilo PICO-8), o que despausava sozinho apos ~1s.
+local BOTOES, b_ant, b_now = {}, {}, {}
+local function add_botao(b) if b ~= nil then BOTOES[#BOTOES + 1] = b end end
+add_botao(UP); add_botao(DOWN); add_botao(LEFT); add_botao(RIGHT)
+add_botao(B_TIRO); add_botao(B_LASER); add_botao(B_ESCUDO); add_botao(B_DEBUG); add_botao(B_DASH); add_botao(B_LEQUE)
+add_botao(BTN_START); add_botao(BTN_SELECT)
+local function le_botoes()   -- 1x por frame, no inicio do update
+  for i = 1, #BOTOES do
+    local b = BOTOES[i]
+    b_ant[b] = b_now[b] or false
+    b_now[b] = ui.btn(b, PAD1) and true or false
+  end
+end
 local function apertou(b)
   if b == ACAO then return apertou(B_TIRO) or apertou(B_LASER) or apertou(BTN_START) end
-  return b ~= nil and ui.btnp(b, PAD1) and true or false
+  return b ~= nil and b_now[b] == true and not b_ant[b]
 end
-local function segurando(b) return b ~= nil and ui.btn(b, PAD1) and true or false end
+local function segurando(b) return b ~= nil and b_now[b] == true end
 -- START no SDK; no console (sem START) L+R juntos
 local function apertou_pausa()
   return apertou(BTN_START) or (segurando(B_DASH) and segurando(B_LEQUE) and (apertou(B_DASH) or apertou(B_LEQUE)))
@@ -283,7 +306,7 @@ local function novo_player(id, x, cor, dir)
            dash_t = 0, dash_dir = 0, dash_cd = 0, leque_cd = 0, debug = 0,
            -- so a CPU usa: parametros atuais da IA e estado da decisao
            cpu = id == 2, reacao = 0, erro = 0, desvio = 0, cont = 0, alvo_y = H / 2 - 8, quer_atirar = false,
-           escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0 }
+           escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0, debug_neg = 0 }
 end
 
 -- Reinicia so a rodada (vidas, posicoes, tiros, eventos); mantem placar e o ajuste da IA.
@@ -460,8 +483,8 @@ local function le_controle(p)
   elseif p.carga > 0 then
     laser, p.carga = p.carga >= CARGA_MIN, 0
   end
-  return dx, dy, ui.btnp(B_TIRO, PAD1), segurando(B_ESCUDO), ui.btnp(B_DASH, PAD1), ui.btnp(B_LEQUE, PAD1),
-         laser, carregando, ui.btnp(B_DEBUG, PAD1)
+  return dx, dy, apertou(B_TIRO), segurando(B_ESCUDO), apertou(B_DASH), apertou(B_LEQUE),
+         laser, carregando, apertou(B_DEBUG)
 end
 
 local function atualiza_player(p)
@@ -522,8 +545,11 @@ local function atualiza_player(p)
     atirar(p, 0, true)
     p.laser_cd, shake = LASER_CD, 4
   end
-  -- X: DEBUG
-  if debug and p.debug > 0 and fase ~= "normal" then cancela_falha(p) end
+  -- X: DEBUG (so tem efeito com falha na tela; senao o X do HUD pisca vermelho = "nada para cancelar")
+  if p.debug_neg > 0 then p.debug_neg = p.debug_neg - 1 end
+  if debug then
+    if p.debug > 0 and fase ~= "normal" then cancela_falha(p) else p.debug_neg = 30 end
+  end
 end
 
 -- Tira 1 vida de `alvo`; se zerar, `autor` (id do outro lado) ganha a rodada.
@@ -681,7 +707,10 @@ local function desenha_hud()
   else ui.rectfill(70, y, 70 + math.floor(30 * p.carga / CARGA_MAX), y + 6, p.carga >= CARGA_MIN and BRANCO or AMAR) end
   ui.print("L", 108, y, BRANCO); ui.rectfill(116, y, 122, y + 6, p.dash_cd <= 0 and VERDE or CINZA)
   ui.print("R", 130, y, BRANCO); ui.rectfill(138, y, 144, y + 6, p.leque_cd <= 0 and VERDE or CINZA)
-  ui.print("X", 152, y, BRANCO); ui.print(TXT_NUM[p.debug] or "+", 160, y, p.debug > 0 and AMAR or CINZA)
+  local xneg = p.debug_neg > 0 and (frame // 4) % 2 == 0
+  local xpronto = p.debug > 0 and fase ~= "normal"           -- ha falha para cancelar: X acende
+  ui.print("X", 152, y, xneg and VERM or (xpronto and ((frame // 8) % 2 == 0 and AMAR or BRANCO) or BRANCO))
+  ui.print(TXT_NUM[p.debug] or "+", 160, y, xneg and VERM or (p.debug > 0 and AMAR or CINZA))
   -- escudo da CPU (embaixo, direita)
   local c = players[2]
   ui.rect(W - 54, y, W - 14, y + 6, CINZA)
@@ -706,7 +735,13 @@ local function desenha_evento()
   end
 end
 
+-- Tutorial e historia ficam em blocos do...end para nao estourar o limite de 200 locais do Lua;
+-- so as funcoes usadas fora sao exportadas. PROG guarda o que ja foi visto (vale ate desligar).
+local tut_comeca, tut_fim, atualiza_tutorial, desenha_tutorial, historia_comeca, atualiza_historia
+local PROG = { tut = false, hist = false }
+
 -- ================= TUTORIAL (estilo fase 1-1: sem texto, aprende fazendo) =================
+do
 -- Cada obstaculo so se resolve com a mecanica que ensina. A unica "lingua" e um controle de SNES
 -- desenhado embaixo com o botao certo pulsando. Errar nao pune: a nave pisca e o obstaculo repete.
 -- Roda sozinho na 1a partida apos ligar; no titulo, Y repete; pausa (START / L+R) pula.
@@ -714,7 +749,6 @@ local TUT_PASSOS = { "mover", "tiro", "escudo", "dash", "leque", "laser", "debug
 local TUT_BOTAO = { mover = "dpad", tiro = "B", escudo = "Y", dash = "L", leque = "R", laser = "A", debug = "X" }
 local TUT_PAREDES = 2          -- paredes que precisa atravessar sem ser atingido (escudo e dash)
 local TUT_JANELA = 12          -- frames para matar o trio do leque antes de ele se regenerar
-local tut_feito = false        -- vale ate desligar o console
 local tut_i, tut_t, tut_cont, tut_pausa, tut_janela = 1, 0, 0, 0, 0
 local tut_wx, tut_wv, tut_parede_on, tut_hit = 0, 0, false, false
 local MAX_ALVOS = 6
@@ -792,7 +826,7 @@ local function tut_inicia_passo()
   end
 end
 
-local function tut_comeca()
+tut_comeca = function()
   tut_i, tut_pausa = 1, 0
   local p = players[1]
   p.x, p.y, p.hit = 30, H / 2 - 8, 0
@@ -800,9 +834,9 @@ local function tut_comeca()
   tut_inicia_passo()
 end
 
-local function tut_fim()
+tut_fim = function()
   tut_limpa()
-  tut_feito = true
+  PROG.tut = true
   fase, evento, msg_t = "normal", nil, 0
   est_tiros, est_acertos, est_falhas, est_patches, est_frames = 0, 0, 0, 0, 0
   explode(players[2].x + 8, players[2].y + 8, T.cor2, 20)   -- VIRUS.EXE "materializa"
@@ -816,7 +850,7 @@ local function tut_sucesso()
   tut_limpa()
 end
 
-local function atualiza_tutorial()
+atualiza_tutorial = function()
   local p, passo = players[1], TUT_PASSOS[tut_i]
   msg_t = 0
   atualiza_player(p)
@@ -949,7 +983,7 @@ local function desenha_controle(hl)
   if hl == "Y" and p.escudo then ui.rectfill(cx - 20, cy + 13, cx - 20 + math.floor(40 * p.energia / ESC_MAX), cy + 14, AMAR) end
 end
 
-local function desenha_tutorial()
+desenha_tutorial = function()
   local p, passo = players[1], TUT_PASSOS[tut_i]
   -- progresso: um ponto por passo
   for i = 1, #TUT_PASSOS do
@@ -998,7 +1032,10 @@ local function desenha_tutorial()
   desenha_controle(TUT_BOTAO[passo])
 end
 
+end -- tutorial
+
 -- ================= HISTORIA (abertura antes do tutorial) =================
+do
 -- Tudo desenhado em codigo (Jupiter, buraco de minhoca, efeitos); naves = sprites existentes.
 -- B avanca (completa o texto / proxima cena); pausa (START / L+R) pula. Toca na 1a partida; X no titulo repete.
 local HIST = {
@@ -1009,14 +1046,13 @@ local HIST = {
   { dur = 300, l1 = "Seu outro eu foi corrompido: " .. T.nome2, l2 = "E ele quer apagar o original." },
   { dur = 300, l1 = "Venca seu alter ego.",                l2 = "Restaure o sistema." },
 }
-local hist_vista = false
 local h_cena, h_t = 1, 0
 
-local function historia_comeca() h_cena, h_t, estado = 1, 0, "historia" end
+historia_comeca = function() h_cena, h_t, estado = 1, 0, "historia" end
 
 local function historia_fim()
-  hist_vista = true
-  if not tut_feito then tut_comeca() else nova_rodada() end
+  PROG.hist = true
+  if not PROG.tut then tut_comeca() else nova_rodada() end
 end
 
 local function nave_hist(id, x, y, flip)
@@ -1043,7 +1079,7 @@ local function minhoca(cx, cy, tam)
   ui.circfill(cx, cy, math.max(1, tam // 5), PRETO)
 end
 
-local function atualiza_historia()
+atualiza_historia = function()
   local cena = HIST[h_cena]
   h_t = h_t + 1
   local n = math.floor(h_t * 1.5)
@@ -1135,6 +1171,8 @@ local function atualiza_historia()
     if i <= h_cena then ui.circfill(W - 20 - (#HIST - i) * 8, 10, 2, i == h_cena and BRANCO or CINZA) end
   end
 end
+
+end -- historia
 
 -- ================= GAME OVER (tela azul) / VITORIA (antivirus) / BOOT =================
 local term, term_cor = {}, {}      -- linhas do terminal: montadas 1x quando a partida acaba
@@ -1273,6 +1311,7 @@ reset()
 estado = "titulo"   -- reset() prepara a partida (e entra em contagem); no boot comecamos no titulo
 
 function update()
+  le_botoes()
   frame = frame + 1
   aplica_paleta()
   ui.clip(0, 0, W, H)
@@ -1310,7 +1349,7 @@ function update()
     centro(AJUDA[10], 234, CINZA)
     if apertou(ACAO) then
       reset()
-      if not hist_vista then historia_comeca() elseif not tut_feito then tut_comeca() end
+      if not PROG.hist then historia_comeca() elseif not PROG.tut then tut_comeca() end
     elseif apertou(B_ESCUDO) then
       reset(); tut_comeca()
     elseif apertou(B_DEBUG) then
@@ -1319,11 +1358,12 @@ function update()
     return
   end
 
+  local pulou = false   -- o mesmo L+R que pula o tutorial nao pode pausar a partida no mesmo frame
   if estado == "tutorial" then
-    if apertou_pausa() then tut_fim() else atualiza_tutorial() end
+    if apertou_pausa() then tut_fim(); pulou = true else atualiza_tutorial() end
   end
 
-  if (estado == "jogo" or estado == "contagem") and apertou_pausa() then
+  if not pulou and (estado == "jogo" or estado == "contagem") and apertou_pausa() then
     estado_ant, estado = estado, "pausa"
   elseif estado == "pausa" then
     if apertou_pausa() or apertou(B_TIRO) then estado = estado_ant
@@ -1349,8 +1389,10 @@ function update()
   if estado ~= "pausa" then atualiza_asteroides() end
   if estado ~= "pausa" then atualiza_tiros() end
 
+  cam_dx, cam_dy = 0, 0
   if shake > 0 then
-    ui.camera(math.random(-4, 4), math.random(-4, 4))
+    cam_dx, cam_dy = math.random(-4, 4), math.random(-4, 4)
+    ui.camera(cam_dx, cam_dy)
     shake = shake - 1
   end
 
@@ -1381,8 +1423,16 @@ function update()
     local t = tiros[i]
     if t.ativo then
       local c = t.dono == 1 and T.cor1 or T.cor2
-      if t.laser then
+      local pl = PLASMA[t.dono]
+      if t.laser and t.h > t.w and LASER_V then          -- parede de laser vertical (tutorial)
+        ui.spr(LASER_V, t.x + 1, t.y)
+      elseif t.laser then
         ui.rectfill(t.x, t.y, t.x + t.w, t.y + t.h, c); ui.rectfill(t.x, t.y + 2, t.x + t.w, t.y + t.h - 2, BRANCO)
+      elseif pl and T.forma == "nave" then               -- plasma animado: janela de 10x10 sobre a tira de 4 quadros
+        local qx, qy = math.floor(t.x + t.w / 2 - PLASMA_Q / 2), math.floor(t.y + t.h / 2 - PLASMA_Q / 2)
+        ui.clip(qx - cam_dx, qy - cam_dy, PLASMA_Q, PLASMA_Q)
+        ui.spr(pl, qx - ((frame // 8 + i) % 4) * PLASMA_Q, qy)
+        ui.clip(0, 0, W, H)
       else forma(T.tiro_forma, t.x, t.y, 5, 5, c, t.dir) end
     end
   end
