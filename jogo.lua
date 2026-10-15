@@ -81,11 +81,12 @@ local ALINHADO = 10          -- px de diferenca no Y para a CPU considerar que e
 
 -- ================= PALETA =================
 local PAL = { 0x0000, 0x7FFF, 0x001F, 0x7C00, 0x03FF, 0x294A, 0x7C1F, 0x03E0, 0x0C63, 0x01BF, 0x5000 }
-for i = 1, #PAL do
-  local c = PAL[i]   -- valores escritos em BGR555 (SDK); no console troca R<->B (RGB555)
-  if CONSOLE then c = ((c & 31) << 10) | (c & 0x3E0) | ((c >> 10) & 31) end
-  ui.palset(i - 1, c)
+-- Cores em BGR555, o mesmo formato que o lupi-codec gera para palette.lua (vale no SDK e no console).
+-- Reaplicada TODO frame, como o primeiro-jogo oficial faz (o console pode resetar a paleta apos o load).
+local function aplica_paleta()
+  for i = 1, #PAL do ui.palset(i - 1, PAL[i]) end
 end
+aplica_paleta()
 local PRETO, BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD = 0,1,2,3,4,5,6,7,8,9,10
 
 local W, H = 480, 270
@@ -653,7 +654,7 @@ local function desenha_gameover()
   ui.rectfill(40, 26, 47, 33, BRANCO); ui.rectfill(40, 50, 47, 57, BRANCO)
   ui.clip(58, 10, 18, 66)
   for r = 26, 28 do circ(88, 42, r, BRANCO) end
-  ui.clip()
+  ui.clip(0, 0, W, H)
   local pronto = desenha_term(40, 86, 12, (t - 60) * 3)
   if pronto then
     if go_pronto == 0 then go_pronto = t end
@@ -708,7 +709,9 @@ estado = "titulo"   -- reset() prepara a partida (e entra em contagem); no boot 
 
 function update()
   frame = frame + 1
-  ui.camera()
+  aplica_paleta()
+  ui.clip(0, 0, W, H)
+  ui.camera(0, 0)
   if estado == "gameover" then desenha_gameover(); return end
   if estado == "boot" then desenha_boot(); return end
   if estado == "vitoria" then desenha_vitoria(); return end
@@ -796,7 +799,7 @@ function update()
     if p.vida > 0 then ui.rectfill(p.x, p.y, p.x + 2, p.y + 2, p.cor) end
   end
 
-  ui.camera()
+  ui.camera(0, 0)
   desenha_hud()
   if estado == "jogo" then desenha_evento() end
   if msg_t > 0 then centro(msg_txt, 60, AMAR) end
