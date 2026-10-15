@@ -40,7 +40,7 @@ local AJUDA = CONSOLE and {
   "B/K revanche   Y/M ou SELECT: titulo", "START ou B/K continua", "Y/M ou SELECT: titulo",
 }
 AJUDA[9] = "cima/baixo: dificuldade   " .. AJUDA[5]
-AJUDA[10] = CONSOLE and "Y: tutorial" or "Y/M: tutorial"
+AJUDA[10] = CONSOLE and "Y: tutorial   X: historia" or "Y/M: tutorial   X/L: historia"
 local VIDAS = 3
 local VEL, VEL_TIRO, RECARGA = 3, 6, 18
 local AVISO_FRAMES = 90                       -- 1.5s de aviso
@@ -96,7 +96,7 @@ local ALINHADO = 10          -- px de diferenca no Y para a CPU considerar que e
 pcall(require, "palette")
 local SPR_PAL = Palette or {}
 local BASE = #SPR_PAL
-local PAL = { 0x0000, 0x7FFF, 0x001F, 0x7C00, 0x03FF, 0x294A, 0x7C1F, 0x03E0, 0x0C63, 0x01BF, 0x5000 }
+local PAL = { 0x0000, 0x7FFF, 0x001F, 0x7C00, 0x03FF, 0x294A, 0x7C1F, 0x03E0, 0x0C63, 0x01BF, 0x5000, 0x1972, 0x42DB }
 -- Cores em BGR555, o mesmo formato que o lupi-codec gera para palette.lua (vale no SDK e no console).
 -- Reaplicada TODO frame, como o primeiro-jogo oficial faz (o console pode resetar a paleta apos o load).
 local function aplica_paleta()
@@ -105,8 +105,8 @@ local function aplica_paleta()
 end
 aplica_paleta()
 local PRETO = 0   -- indice 0 = transparente (fundo preto)
-local BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD =
-  BASE + 1, BASE + 2, BASE + 3, BASE + 4, BASE + 5, BASE + 6, BASE + 7, BASE + 8, BASE + 9, BASE + 10
+local BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD, MARROM, BEGE =
+  BASE + 1, BASE + 2, BASE + 3, BASE + 4, BASE + 5, BASE + 6, BASE + 7, BASE + 8, BASE + 9, BASE + 10, BASE + 11, BASE + 12
 
 -- Sprites das naves (src/naves/*.png, "Cozy Space Ships" por Bramble & Byte, CC-BY 4.0).
 -- Esperado: PNG girado 90 graus horario (apontando para a DIREITA); a CPU e espelhada no codigo.
@@ -998,6 +998,144 @@ local function desenha_tutorial()
   desenha_controle(TUT_BOTAO[passo])
 end
 
+-- ================= HISTORIA (abertura antes do tutorial) =================
+-- Tudo desenhado em codigo (Jupiter, buraco de minhoca, efeitos); naves = sprites existentes.
+-- B avanca (completa o texto / proxima cena); pausa (START / L+R) pula. Toca na 1a partida; X no titulo repete.
+local HIST = {
+  { dur = 300, l1 = "ANO 2387. ORBITA DE JUPITER.",        l2 = "Um piloto solitario cruza o vazio." },
+  { dur = 300, l1 = "Um buraco de minhoca se abre a frente.", l2 = "Velocidade da luz. Impossivel desviar." },
+  { dur = 120, l1 = "",                                    l2 = "" },
+  { dur = 300, l1 = "FALHA NO SISTEMA: materia duplicada.", l2 = "A nave... e o piloto. Agora sao dois." },
+  { dur = 300, l1 = "Seu outro eu foi corrompido: " .. T.nome2, l2 = "E ele quer apagar o original." },
+  { dur = 300, l1 = "Venca seu alter ego.",                l2 = "Restaure o sistema." },
+}
+local hist_vista = false
+local h_cena, h_t = 1, 0
+
+local function historia_comeca() h_cena, h_t, estado = 1, 0, "historia" end
+
+local function historia_fim()
+  hist_vista = true
+  if not tut_feito then tut_comeca() else nova_rodada() end
+end
+
+local function nave_hist(id, x, y, flip)
+  local spr = NAVE_SPR[id]
+  if spr then ui.spr(spr, x - NAVE_TAM / 2, y - NAVE_TAM / 2, flip)
+  else forma("tri", x - 8, y - 8, 16, 16, id == 1 and T.cor1 or T.cor2, flip and -1 or 1) end
+end
+
+local function jupiter(cx, cy, r)
+  ui.circfill(cx, cy, r, BEGE)
+  for dy = -r + 4, r - 4, 7 do                -- faixas: linhas cortadas na corda do circulo
+    local hw = math.floor(math.sqrt(r * r - dy * dy))
+    local c = ((dy + r) // 7) % 3 == 0 and MARROM or (((dy + r) // 7) % 3 == 1 and LARANJA or BEGE)
+    ui.line(cx - hw, cy + dy, cx + hw, cy + dy, c); ui.line(cx - hw, cy + dy + 1, cx + hw, cy + dy + 1, c)
+  end
+  ui.circfill(cx - r // 3, cy + r // 3, r // 6, VERM)   -- grande mancha vermelha
+end
+
+local function minhoca(cx, cy, tam)
+  for k = 0, 5 do
+    local r = (tam - k * 7 + (frame // 2) % 7)
+    if r > 1 then circ(cx, cy, r, (k + frame // 4) % 3 == 0 and BRANCO or (k % 2 == 0 and ROXO or AZUL)) end
+  end
+  ui.circfill(cx, cy, math.max(1, tam // 5), PRETO)
+end
+
+local function atualiza_historia()
+  local cena = HIST[h_cena]
+  h_t = h_t + 1
+  local n = math.floor(h_t * 1.5)
+  local completo = n >= #cena.l1 + #cena.l2 + 8
+  if apertou_pausa() then historia_fim(); return end
+  if apertou(ACAO) then
+    if completo or cena.l1 == "" then h_t = cena.dur
+    else h_t = math.min(cena.dur - 1, math.ceil((#cena.l1 + #cena.l2 + 8) / 1.5)) end   -- so completa o texto
+  end
+  if h_t >= cena.dur and (completo or cena.l1 == "") then
+    h_cena, h_t = h_cena + 1, 0
+    if h_cena > #HIST then historia_fim(); return end
+    cena = HIST[h_cena]
+    if h_cena == 3 then shake = 40 end
+  end
+
+  ui.cls(PRETO)
+  local t = h_t
+  -- estrelas: na cena 2 viram riscos de velocidade da luz
+  local vel = (h_cena == 2) and (1 + t / 20) or 0.6
+  for i = 1, #estrelas do
+    local e = estrelas[i]
+    e.x = e.x - e.v * vel
+    if e.x < 0 then e.x = W end
+    if h_cena == 2 and t > 60 then ui.line(e.x, e.y, e.x + e.v * vel * 3, e.y, e.v == 3 and BRANCO or CINZA)
+    else ui.rectfill(e.x, e.y, e.x + 1, e.y + 1, e.v == 3 and BRANCO or CINZA) end
+  end
+  if shake > 0 then ui.camera(math.random(-5, 5), math.random(-5, 5)); shake = shake - 1 end
+
+  local cy = 110
+  if h_cena == 1 then
+    jupiter(360, 100, 75)
+    nave_hist(1, -20 + t * 0.9, cy + math.sin(t * 0.05) * 4, false)
+  elseif h_cena == 2 then
+    jupiter(360 - t * 2, 100, 75)
+    minhoca(W - 70, cy, math.min(60, t // 3 + 4))
+    local x = 160 + (t > 180 and (t - 180) * (t - 180) * 0.02 or 0)
+    nave_hist(1, math.min(x, W - 70), cy, false)
+  elseif h_cena == 3 then
+    if t < 12 then ui.rectfill(0, 0, W, H, BRANCO) end
+    for i = 1, 6 do
+      local gy = math.random(0, H)
+      ui.rectfill(0, gy, W, gy + math.random(1, 4), math.random(0, 2) == 0 and ROXO or (math.random(0, 1) == 0 and VERDE or VERM))
+    end
+  elseif h_cena == 4 then
+    local off = math.min(28, t * 0.3)
+    nave_hist(1, MEIO - 40, cy - off, false)
+    if (t // 3) % 4 ~= 0 then nave_hist(2, MEIO - 40 + math.random(-2, 2), cy + off, false) end
+    if math.random() < 0.3 then
+      local gy = cy + off + math.random(-12, 12)
+      ui.rectfill(MEIO - 60, gy, MEIO - 10, gy + 1, VERM)
+    end
+  elseif h_cena == 5 then
+    nave_hist(1, MEIO - 120, cy, false)
+    local ex = MEIO + math.min(120, t * 1.2)
+    nave_hist(2, ex, cy, true)
+    circ(ex, cy, 16 + (frame // 4) % 3, VERM)
+    if t > 120 then
+      local tx = ex - (t - 120) * 5
+      if tx > MEIO - 110 then ui.rectfill(tx, cy - 2, tx + 6, cy + 2, VERM)
+      else circ(MEIO - 120, cy, 14, AMAR); if t < 200 then explode(MEIO - 106, cy, AMAR, 1) end end
+    end
+  elseif h_cena == 6 then
+    nave_hist(1, 70, cy, false)
+    nave_hist(2, W - 70, cy, true)
+    for y = 40, 180, 12 do ui.line(MEIO, y, MEIO, y + 5, CINZA) end
+    local cor = (frame // 8) % 2 == 0 and AMAR or VERM
+    centro(T.titulo, 60 + ((math.random() < 0.1) and math.random(-2, 2) or 0), cor)
+  end
+  for i = 1, MAX_PART do
+    local q = parts[i]
+    if q.vida > 0 then
+      q.x, q.y, q.vida = q.x + q.vx, q.y + q.vy, q.vida - 1
+      ui.rectfill(q.x, q.y, q.x + 2, q.y + 2, q.cor)
+    end
+  end
+  ui.camera(0, 0)
+
+  -- caixa de texto com efeito de digitacao
+  if cena.l1 ~= "" then
+    ui.rectfill(16, 206, W - 16, 258, ESCURO); ui.rect(16, 206, W - 16, 258, VERDE)
+    ui.print(n >= #cena.l1 and cena.l1 or string.sub(cena.l1, 1, n), 28, 218, BRANCO)
+    local n2 = n - #cena.l1 - 8
+    if n2 > 0 then ui.print(n2 >= #cena.l2 and cena.l2 or string.sub(cena.l2, 1, n2), 28, 234, VERDE) end
+    if completo and (frame // 20) % 2 == 0 then ui.trisfill(W - 34, 246, W - 26, 246, W - 30, 251, VERDE) end
+  end
+  -- cenas ja vistas: pontinhos
+  for i = 1, #HIST do
+    if i <= h_cena then ui.circfill(W - 20 - (#HIST - i) * 8, 10, 2, i == h_cena and BRANCO or CINZA) end
+  end
+end
+
 -- ================= GAME OVER (tela azul) / VITORIA (antivirus) / BOOT =================
 local term, term_cor = {}, {}      -- linhas do terminal: montadas 1x quando a partida acaba
 local go_t, go_pronto = 0, 0
@@ -1142,6 +1280,7 @@ function update()
   if estado == "gameover" then desenha_gameover(); return end
   if estado == "boot" then desenha_boot(); return end
   if estado == "vitoria" then desenha_vitoria(); return end
+  if estado == "historia" then atualiza_historia(); return end
   desenha_fundo()
 
   if estado == "titulo" then
@@ -1171,9 +1310,11 @@ function update()
     centro(AJUDA[10], 234, CINZA)
     if apertou(ACAO) then
       reset()
-      if not tut_feito then tut_comeca() end
+      if not hist_vista then historia_comeca() elseif not tut_feito then tut_comeca() end
     elseif apertou(B_ESCUDO) then
       reset(); tut_comeca()
+    elseif apertou(B_DEBUG) then
+      reset(); historia_comeca()
     end
     return
   end
