@@ -1,4 +1,5 @@
--- DUELO CORINGA - LUPI (480x270 @ 60fps)  -- tema da jam: FALHA NO SISTEMA
+-- ALTER.EXE - LUPI (480x270 @ 60fps)  -- tema da jam: FALHA NO SISTEMA
+-- (codigo nasceu como "Duelo Coringa"; ALTER.EXE e o nome do jogo e do alter ego corrompido)
 -- 1 jogador vs CPU, controle de Super Nintendo (pad 0). Todos os botoes tem mecanica:
 --   SNES  mecanica                                   SDK 1.1.0 (tecla)      console (docs lupi.api.br)
 --   dir   move                                       WASD                   LEFT/RIGHT/UP/DOWN
@@ -165,7 +166,7 @@ for k, e in pairs(EVENTOS) do e.id = k end
 -- ================= TEMAS =================
 local TEMAS = {
   falha = {
-    titulo = "FALHA NO SISTEMA", nome1 = "NAVE", nome2 = "VIRUS.EXE",
+    titulo = "ALTER.EXE", subtitulo = "uma falha no sistema", nome1 = "NAVE", nome2 = "ALTER.EXE",
     cor1 = VERDE, cor2 = VERM, fundo_cor = PRETO, fundo = "estrelas", glitch = true,
     forma = "nave", tiro_forma = "quad", aviso = "ERRO CRITICO DETECTADO",
     vitoria = " VENCEU!", eventos = { "inverte", "inverte", "turbo", "lama", "rajada", "chuva", "chuva" },
@@ -212,6 +213,49 @@ for a = 0, 2 do for b = 0, 2 do
 end end
 local TXT_RODADA = { "RODADA 1", "RODADA 2", "RODADA 3" }
 local TXT_VS = "VOCE vs " .. T.nome2
+
+-- Logo em pixel grande: fonte 5x7 definida aqui (so as letras do nome) e desenhada com retangulos.
+-- As linhas de cada letra viram "trechos" (linha, col inicial, col final) 1x no load: menos chamadas.
+local LOGO_FONTE = {
+  A = { ".XXX.", "X...X", "X...X", "XXXXX", "X...X", "X...X", "X...X" },
+  L = { "X....", "X....", "X....", "X....", "X....", "X....", "XXXXX" },
+  T = { "XXXXX", "..X..", "..X..", "..X..", "..X..", "..X..", "..X.." },
+  E = { "XXXXX", "X....", "X....", "XXXX.", "X....", "X....", "XXXXX" },
+  R = { "XXXX.", "X...X", "X...X", "XXXX.", "X.X..", "X..X.", "X...X" },
+  X = { "X...X", "X...X", ".X.X.", "..X..", ".X.X.", "X...X", "X...X" },
+  ["."] = { "..", "..", "..", "..", "..", "XX", "XX" },
+}
+local LOGO_TXT = T.titulo
+local logo_r, logo_c0, logo_c1, logo_larg = {}, {}, {}, 0
+do
+  local cx = 0
+  for i = 1, #LOGO_TXT do
+    local g = LOGO_FONTE[string.sub(LOGO_TXT, i, i)]
+    if g then
+      for r = 1, 7 do
+        local linha, c = g[r], 1
+        while c <= #linha do
+          if string.sub(linha, c, c) == "X" then
+            local c0 = c
+            while c <= #linha and string.sub(linha, c, c) == "X" do c = c + 1 end
+            logo_r[#logo_r + 1], logo_c0[#logo_c0 + 1], logo_c1[#logo_c1 + 1] = r - 1, cx + c0 - 1, cx + c - 2
+          else c = c + 1 end
+        end
+      end
+      cx = cx + #g[1] + 1
+    else cx = cx + 4 end
+  end
+  logo_larg = cx - 1
+end
+local function desenha_logo(y, esc, cor, sombra)
+  local x0 = math.floor(W / 2 - logo_larg * esc / 2)
+  for i = 1, #logo_r do
+    local gx = (math.random() < 0.02) and math.random(-3, 3) or 0   -- glitch: linha deslocada de vez em quando
+    local x, yy = x0 + logo_c0[i] * esc + gx, y + logo_r[i] * esc
+    if sombra then ui.rectfill(x + 2, yy + 2, x0 + (logo_c1[i] + 1) * esc - 1 + gx + 2, yy + esc + 1, sombra) end
+    ui.rectfill(x, yy, x0 + (logo_c1[i] + 1) * esc - 1 + gx, yy + esc - 1, cor)
+  end
+end
 
 -- ================= DESEMPENHO =================
 -- GC geracional: o lixo de vida curta e limpo em passos pequenos (sem engasgo no ESP32).
@@ -722,16 +766,22 @@ local function desenha_fundo()
   end
 end
 
+-- vida = navezinha 7x7 desenhada em codigo (bico para o lado em que a nave olha)
+local function mini_nave(x, y, dir, cor)
+  if dir == 1 then
+    ui.trisfill(x, y, x, y + 6, x + 7, y + 3, cor); ui.rectfill(x - 1, y + 2, x, y + 4, LARANJA)
+  else
+    ui.trisfill(x + 7, y, x + 7, y + 6, x, y + 3, cor); ui.rectfill(x + 7, y + 2, x + 8, y + 4, LARANJA)
+  end
+end
+
 local function desenha_hud()
   local n1 = T.nome1
   ui.print(n1, 8, 6, T.cor1)
-  for i = 1, players[1].vidas do ui.rectfill(12 + #n1 * 6 + i * 10, 6, 18 + #n1 * 6 + i * 10, 12, T.cor1) end
+  for i = 1, players[1].vidas do mini_nave(12 + #n1 * 6 + i * 10, 6, 1, T.cor1) end
   local n2 = hud2
   ui.print(n2, W - 8 - #n2 * 6, 6, T.cor2)
-  for i = 1, players[2].vidas do
-    local x = W - 14 - #n2 * 6 - i * 10
-    ui.rectfill(x, 6, x + 6, 12, T.cor2)
-  end
+  for i = 1, players[2].vidas do mini_nave(W - 14 - #n2 * 6 - i * 10, 6, -1, T.cor2) end
   -- habilidades do jogador (embaixo, esquerda): Y escudo | A laser | L dash | R leque | X debug
   local p, y = players[1], H - 11
   ui.print("Y", 6, y, BRANCO)
@@ -1385,7 +1435,10 @@ function update()
   desenha_fundo()
 
   if estado == "titulo" then
-    centro(T.titulo, 34, AMAR)
+    if T.subtitulo then
+      desenha_logo(8, 3, (frame // 90) % 8 == 0 and VERM or AMAR, ROXO)
+      centro(T.subtitulo, 34, ROXO)
+    else centro(T.titulo, 34, AMAR) end
     centro(TXT_VS, 48, T.cor2)
     centro(AJUDA[1], 68, BRANCO)
     centro(AJUDA[2], 80, BRANCO)
