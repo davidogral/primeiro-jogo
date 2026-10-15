@@ -80,14 +80,29 @@ local CONFUSAO = 30          -- frames que a CPU anda errado no inicio do "inver
 local ALINHADO = 10          -- px de diferenca no Y para a CPU considerar que esta na mira
 
 -- ================= PALETA =================
+-- Cores dos sprites: o codec gera palette.lua (Palette) e os PNGs usam os indices 0..#Palette-1.
+-- As cores do jogo ficam DEPOIS delas para nao estragar os sprites (limite do console: 256 cores).
+pcall(require, "palette")
+local SPR_PAL = Palette or {}
+local BASE = #SPR_PAL
 local PAL = { 0x0000, 0x7FFF, 0x001F, 0x7C00, 0x03FF, 0x294A, 0x7C1F, 0x03E0, 0x0C63, 0x01BF, 0x5000 }
 -- Cores em BGR555, o mesmo formato que o lupi-codec gera para palette.lua (vale no SDK e no console).
 -- Reaplicada TODO frame, como o primeiro-jogo oficial faz (o console pode resetar a paleta apos o load).
 local function aplica_paleta()
-  for i = 1, #PAL do ui.palset(i - 1, PAL[i]) end
+  for i = 1, #SPR_PAL do ui.palset(i - 1, SPR_PAL[i]) end
+  for i = 2, #PAL do ui.palset(BASE + i - 1, PAL[i]) end
 end
 aplica_paleta()
-local PRETO, BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD = 0,1,2,3,4,5,6,7,8,9,10
+local PRETO = 0   -- indice 0 = transparente (fundo preto)
+local BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD =
+  BASE + 1, BASE + 2, BASE + 3, BASE + 4, BASE + 5, BASE + 6, BASE + 7, BASE + 8, BASE + 9, BASE + 10
+
+-- Sprites das naves (src/naves/*.png, "Cozy Space Ships" por Bramble & Byte, CC-BY 4.0).
+-- Esperado: PNG girado 90 graus horario (apontando para a DIREITA); a CPU e espelhada no codigo.
+-- Sem o PNG, cai na nave geometrica.
+pcall(require, "sprites")
+local NAVE_SPR = {}
+if Sprites and Sprites.naves then NAVE_SPR[1], NAVE_SPR[2] = Sprites.naves["sparrow-cream"], Sprites.naves["sparrow-slate"] end
 
 local W, H = 480, 270
 local MEIO = W / 2
@@ -738,6 +753,7 @@ function update()
       end
     end
     centro(DIFICULDADES[ORDEM_DIF[dif_idx]].desc, 200, ROXO)
+    centro("naves: Cozy Space Ships por Bramble & Byte (CC-BY 4.0)", 256, CINZA)
     if (frame // 30) % 2 == 0 then centro("cima/baixo: dificuldade   " .. AJUDA[5], 222, VERDE) end
     if apertou(ACAO) then reset() end
     return
@@ -775,7 +791,16 @@ function update()
 
   for _, p in ipairs(players) do
     if p.vidas > 0 and (p.hit == 0 or (frame // 3) % 2 == 0) then
-      forma(T.forma, p.x, p.y, p.w, p.h, p.cor, p.dir)
+      local spr = T.forma == "nave" and NAVE_SPR[p.id]
+      if spr then
+        if (frame // 4) % 2 == 0 then   -- chama do motor atras do sprite
+          local mx = p.dir == 1 and p.x - 8 or p.x + p.w + 4
+          ui.rectfill(mx, p.y + 6, mx + 4, p.y + 10, LARANJA)
+        end
+        ui.spr(spr, p.x + p.w / 2 - spr.width / 2, p.y + p.h / 2 - spr.height / 2, p.dir == -1)
+      else
+        forma(T.forma, p.x, p.y, p.w, p.h, p.cor, p.dir)
+      end
     end
     if p.vidas > 0 then
       if p.escudo then circ(p.x + 8, p.y + 8, 13, AMAR) end
