@@ -101,7 +101,7 @@ local BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD =
 -- Esperado: PNG girado 90 graus horario (apontando para a DIREITA); a CPU e espelhada no codigo.
 -- Sem o PNG, cai na nave geometrica.
 pcall(require, "sprites")
-local NAVE_SPR = {}
+local NAVE_SPR, NAVE_TAM = {}, 24   -- sparrow 1x = 24x24
 if Sprites and Sprites.naves then NAVE_SPR[1], NAVE_SPR[2] = Sprites.naves["sparrow-cream"], Sprites.naves["sparrow-slate"] end
 
 local W, H = 480, 270
@@ -797,7 +797,9 @@ function update()
           local mx = p.dir == 1 and p.x - 8 or p.x + p.w + 4
           ui.rectfill(mx, p.y + 6, mx + 4, p.y + 10, LARANJA)
         end
-        ui.spr(spr, p.x + p.w / 2 - spr.width / 2, p.y + p.h / 2 - spr.height / 2, p.dir == -1)
+        -- no console o Sprites nao tem width/height (so no SDK): usa o tamanho conhecido do PNG
+        local sw, sh = tonumber(spr.width) or NAVE_TAM, tonumber(spr.height) or NAVE_TAM
+        ui.spr(spr, p.x + p.w / 2 - sw / 2, p.y + p.h / 2 - sh / 2, p.dir == -1)
       else
         forma(T.forma, p.x, p.y, p.w, p.h, p.cor, p.dir)
       end
