@@ -54,6 +54,14 @@ local CARGA_MIN, CARGA_MAX, LASER_CD = 30, 45, 150
 local DASH_T, DASH_VEL, DASH_CD = 10, 8, 75
 local LEQUE_CD, LEQUE_VY = 90, 1.5
 local DEBUG_CARGAS = 1                        -- DEBUGs do jogador por rodada
+-- Evento CHUVA DE ASTEROIDES (sprites src/asteroides/*.png, Space Shooter Redux por Kenney, CC0)
+local MAX_AST, AST_SPAWN = 14, 9              -- pool e frames entre asteroides
+local AST_TIPOS = {                           -- tam = lado do PNG (console nao informa), raio = hitbox
+  { nome = "meteorGrey_med1",   tam = 43, raio = 16, vel = 1.6, hp = 3 },
+  { nome = "meteorGrey_small1", tam = 28, raio = 11, vel = 2.3, hp = 2 },
+  { nome = "meteorGrey_tiny1",  tam = 18, raio = 7,  vel = 3.0, hp = 1 },
+}
+local AST_ESCUDO = 30                         -- energia de escudo gasta ao bloquear um asteroide
 
 -- ================= CPU (IA por regras) =================
 -- reacao: frames entre decisoes | erro: +-px no Y mirado | desvio: chance de fugir de tiro
@@ -103,6 +111,10 @@ local BRANCO, VERM, AZUL, AMAR, CINZA, ROXO, VERDE, ESCURO, LARANJA, AZUL_BSOD =
 pcall(require, "sprites")
 local NAVE_SPR, NAVE_TAM = {}, 24   -- sparrow 1x = 24x24
 if Sprites and Sprites.naves then NAVE_SPR[1], NAVE_SPR[2] = Sprites.naves["sparrow-cream"], Sprites.naves["sparrow-slate"] end
+local AST_SPR = {}   -- sem o PNG, o asteroide vira um circulo
+if Sprites and Sprites.asteroides then
+  for i = 1, #AST_TIPOS do AST_SPR[i] = Sprites.asteroides[AST_TIPOS[i].nome] end
+end
 
 local W, H = 480, 270
 local MEIO = W / 2
@@ -113,6 +125,7 @@ local EVENTOS = {
   turbo   = { nome = "TURBO",     cor = LARANJA, dur = 240, vel = 2 },
   lama    = { nome = "LENTO",     cor = CINZA,   dur = 240, vel = 0.4 },
   rajada  = { nome = "RAJADA",    cor = VERDE,   dur = 240, rec = 0.3, tiro = 1.5 },
+  chuva   = { nome = "CHUVA DE ASTEROIDES", cor = LARANJA, dur = 360, chuva = true },
 }
 for k, e in pairs(EVENTOS) do e.id = k end
 
@@ -122,8 +135,9 @@ local TEMAS = {
     titulo = "FALHA NO SISTEMA", nome1 = "NAVE", nome2 = "VIRUS.EXE",
     cor1 = VERDE, cor2 = VERM, fundo_cor = PRETO, fundo = "estrelas", glitch = true,
     forma = "nave", tiro_forma = "quad", aviso = "ERRO CRITICO DETECTADO",
-    vitoria = " VENCEU!", eventos = { "inverte", "inverte", "turbo", "lama", "rajada" },
-    nomes = { inverte = "CONTROLES CORROMPIDOS", turbo = "OVERCLOCK", lama = "LAG", rajada = "BUFFER OVERFLOW" },
+    vitoria = " VENCEU!", eventos = { "inverte", "inverte", "turbo", "lama", "rajada", "chuva", "chuva" },
+    nomes = { inverte = "CONTROLES CORROMPIDOS", turbo = "OVERCLOCK", lama = "LAG", rajada = "BUFFER OVERFLOW",
+              chuva = "CHUVA DE ASTEROIDES" },
   },
   padrao = {
     titulo = "DUELO INVERTIDO", nome1 = "VOCE", nome2 = "CPU",
@@ -135,7 +149,7 @@ local TEMAS = {
     titulo = "GUERRA ORBITAL", nome1 = "NAVE A", nome2 = "NAVE B",
     cor1 = VERDE, cor2 = ROXO, fundo_cor = PRETO, fundo = "estrelas",
     forma = "tri", tiro_forma = "circ", aviso = "ANOMALIA GRAVITACIONAL",
-    vitoria = " DOMINA A ORBITA!", eventos = { "inverte", "inverte", "lama", "turbo" },
+    vitoria = " DOMINA A ORBITA!", eventos = { "inverte", "inverte", "lama", "turbo", "chuva" },
   },
   faroeste = {
     titulo = "DUELO AO SOL", nome1 = "XERIFE", nome2 = "BANDIDO",
@@ -169,6 +183,8 @@ local MAX_TIROS, MAX_PART = 40, 60
 local tiros, parts = {}, {}
 for i = 1, MAX_TIROS do tiros[i] = { ativo = false, x = 0, y = 0, dir = 0, dono = 0, v = 0, vy = 0, w = 5, h = 5, laser = false } end
 for i = 1, MAX_PART do parts[i] = { vida = 0, x = 0, y = 0, vx = 0, vy = 0, cor = 0 } end
+local asts = {}
+for i = 1, MAX_AST do asts[i] = { ativo = false, x = 0, y = 0, vx = 0, vy = 0, tipo = 1, hp = 0 } end
 
 local estrelas = {}
 for i = 1, 40 do estrelas[i] = { x = math.random(0, W), y = math.random(0, H), v = math.random(1, 3) } end
@@ -246,7 +262,7 @@ local function novo_player(id, x, cor, dir)
            dash_t = 0, dash_dir = 0, dash_cd = 0, leque_cd = 0, debug = 0,
            -- so a CPU usa: parametros atuais da IA e estado da decisao
            cpu = id == 2, reacao = 0, erro = 0, desvio = 0, cont = 0, alvo_y = H / 2 - 8, quer_atirar = false,
-           escudo_t = 0, carregando = 0, dash_pref = 1 }
+           escudo_t = 0, carregando = 0, dash_pref = 1, desv_t = 0, desv_dir = 0 }
 end
 
 -- Reinicia so a rodada (vidas, posicoes, tiros, eventos); mantem placar e o ajuste da IA.
@@ -258,9 +274,11 @@ nova_rodada = function()
     p.cont, p.quer_atirar, p.alvo_y = 0, false, p.y
     p.energia, p.escudo, p.quebrado, p.carga, p.laser_cd = ESC_MAX, false, false, 0, 0
     p.dash_t, p.dash_cd, p.leque_cd, p.escudo_t, p.carregando = 0, 0, 0, 0, 0
+    p.desv_t, p.desv_dir = 0, 0
     p.debug = p.cpu and dif.debug or DEBUG_CARGAS
   end
   for i = 1, MAX_TIROS do tiros[i].ativo = false end
+  for i = 1, MAX_AST do asts[i].ativo = false end
   shake, vencedor, msg_t = 0, nil, 0
   fase, timer, evento = "normal", math.random(INTERVALO_MIN, INTERVALO_MAX), nil
   sorteia_evento()
@@ -375,6 +393,24 @@ local function pensa_cpu(c)
     if dy_alvo >= ALINHADO and dy_alvo < 60 and c.leque_cd <= 0 and math.random() < dif.leque then leque = true end
     if dy_alvo < ALINHADO and c.laser_cd <= 0 and not amea and math.random() < dif.laser then c.carregando = CARGA_MIN end
     if fase == "ativo" and evento.inv and c.debug > 0 and (evento.dur - timer) >= CONFUSAO then debug = true end
+    -- asteroide caindo em cima: desvia para o lado (dx) ou levanta o escudo
+    for i = 1, MAX_AST do
+      local a = asts[i]
+      if a.ativo then
+        local r = AST_TIPOS[a.tipo].raio
+        local cx, cy = c.x + c.w / 2, c.y + c.h / 2
+        local fx = a.x + a.vx * ((cy - a.y) / a.vy)   -- onde ele cruza a altura da CPU
+        if a.y < cy + r and cy - a.y < 90 and math.abs(fx - cx) < r + 12 then
+          if math.random() < c.desvio then
+            c.desv_t, c.desv_dir = 18, (fx > cx) and -1 or 1
+            if c.x < MEIO + 20 then c.desv_dir = 1 elseif c.x > W - c.w - 20 then c.desv_dir = -1 end
+          elseif not c.quebrado and math.random() < dif.escudo then
+            c.escudo_t = 25
+          end
+          break
+        end
+      end
+    end
   end
   local dy, diff = 0, c.alvo_y - c.y
   if diff > 2 then dy = 1 elseif diff < -2 then dy = -1 end
@@ -382,7 +418,11 @@ local function pensa_cpu(c)
   -- no "inverte" a CPU tambem fica confusa: anda errado nos primeiros CONFUSAO frames, depois compensa
   if fase == "ativo" and evento.inv and (evento.dur - timer) < CONFUSAO then dy = -dy end
   local atira = c.quer_atirar and math.abs(c.y - alvo.y) < ALINHADO
-  return 0, dy, atira, c.escudo_t > 0, dash, leque, laser, false, debug
+  -- dx: desvio lateral de asteroide; senao volta devagar para a posicao inicial
+  local dx = 0
+  if c.desv_t > 0 then c.desv_t, dx = c.desv_t - 1, c.desv_dir
+  elseif c.x < W - 48 then dx = 1 elseif c.x > W - 44 then dx = -1 end
+  return dx, dy, atira, c.escudo_t > 0, dash, leque, laser, false, debug
 end
 
 -- dx, dy, atira, escudo, dash, leque, laser (dispara agora), carregando, debug
@@ -465,6 +505,79 @@ local function atualiza_player(p)
   if debug and p.debug > 0 and fase ~= "normal" then cancela_falha(p) end
 end
 
+-- Tira 1 vida de `alvo`; se zerar, `autor` (id do outro lado) ganha a rodada.
+local function dano(alvo, autor)
+  if alvo.escudo then alvo.escudo, alvo.quebrado, alvo.energia = false, true, 0 end
+  alvo.vidas, alvo.hit, shake = alvo.vidas - 1, 45, 12
+  ajusta_ia(alvo.cpu)
+  explode(alvo.x + 8, alvo.y + 8, alvo.cor, 12)
+  if alvo.vidas <= 0 then
+    explode(alvo.x + 8, alvo.y + 8, BRANCO, 25)
+    placar[autor] = placar[autor] + 1
+    vencedor, shake = autor, 25
+    if placar[autor] >= RODADAS_PARA_VENCER then
+      estado, cont_t = "fim", FIM_FRAMES
+      if autor == 1 and ORDEM_DIF[dif_idx] == "dificil" and not desbloqueado then
+        desbloqueado, novo_desbloq = true, true
+      end
+    else estado, cont_t = "entre", PAUSA_RODADA end
+  end
+end
+
+-- CHUVA DE ASTEROIDES: nascem no topo durante o evento e caem na diagonal pela tela toda.
+-- Tiros quebram (hp), escudo bloqueia (gasta energia), dash atravessa, encostar tira 1 vida.
+local function atualiza_asteroides()
+  if estado == "jogo" and fase == "ativo" and evento.chuva and frame % AST_SPAWN == 0 then
+    for i = 1, MAX_AST do
+      local a = asts[i]
+      if not a.ativo then
+        local tp = math.random(1, #AST_TIPOS)
+        local ti = AST_TIPOS[tp]
+        a.ativo, a.tipo, a.hp = true, tp, ti.hp
+        a.x, a.y = math.random(10, W - 10), YMIN - ti.tam
+        a.vy = ti.vel * (0.8 + math.random() * 0.4)
+        a.vx = (math.random() - 0.5) * 1.6
+        break
+      end
+    end
+  end
+  for i = 1, MAX_AST do
+    local a = asts[i]
+    if a.ativo then
+      local r = AST_TIPOS[a.tipo].raio
+      a.x, a.y = a.x + a.vx, a.y + a.vy
+      if a.y > H + 40 or a.x < -40 or a.x > W + 40 then a.ativo = false end
+      -- tiros
+      for j = 1, MAX_TIROS do
+        local t = tiros[j]
+        if a.ativo and t.ativo and math.abs(t.x + t.w / 2 - a.x) < r + t.w / 2 and math.abs(t.y + t.h / 2 - a.y) < r + t.h / 2 then
+          if not t.laser then t.ativo = false end
+          a.hp = a.hp - (t.laser and 99 or 1)
+          if a.hp <= 0 then a.ativo = false; explode(a.x, a.y, CINZA, 8)
+          else explode(t.x, t.y, BRANCO, 2) end
+        end
+      end
+      -- naves
+      for k = 1, 2 do
+        local p = players[k]
+        if a.ativo and estado == "jogo" and p.hit == 0 and p.dash_t == 0 then
+          local dx, dy = a.x - (p.x + p.w / 2), a.y - (p.y + p.h / 2)
+          if dx * dx + dy * dy < (r + 7) * (r + 7) then
+            a.ativo = false
+            explode(a.x, a.y, CINZA, 10)
+            if p.escudo then
+              p.energia = p.energia - AST_ESCUDO
+              if p.energia <= 0 then p.energia, p.escudo, p.quebrado = 0, false, true end
+            else
+              dano(p, k == 1 and 2 or 1)
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
 local function atualiza_tiros()
   for i = 1, MAX_TIROS do
     local t = tiros[i]
@@ -488,23 +601,9 @@ local function atualiza_tiros()
         t.ativo = false
         explode(t.x, t.y, AMAR, 3)
        else
-        if alvo.escudo then alvo.escudo, alvo.quebrado, alvo.energia = false, true, 0 end
         t.ativo = false
-        alvo.vidas, alvo.hit, shake = alvo.vidas - 1, 45, 12
         if t.dono == 1 then est_acertos = est_acertos + 1 end
-        ajusta_ia(alvo.cpu)
-        explode(alvo.x + 8, alvo.y + 8, alvo.cor, 12)
-        if alvo.vidas <= 0 then
-          explode(alvo.x + 8, alvo.y + 8, BRANCO, 25)
-          placar[t.dono] = placar[t.dono] + 1
-          vencedor, shake = t.dono, 25
-          if placar[t.dono] >= RODADAS_PARA_VENCER then
-            estado, cont_t = "fim", FIM_FRAMES
-            if t.dono == 1 and ORDEM_DIF[dif_idx] == "dificil" and not desbloqueado then
-              desbloqueado, novo_desbloq = true, true
-            end
-          else estado, cont_t = "entre", PAUSA_RODADA end
-        end
+        dano(alvo, t.dono)
        end
       end
     end
@@ -753,7 +852,8 @@ function update()
       end
     end
     centro(DIFICULDADES[ORDEM_DIF[dif_idx]].desc, 200, ROXO)
-    centro("naves: Cozy Space Ships por Bramble & Byte (CC-BY 4.0)", 256, CINZA)
+    centro("naves: Cozy Space Ships por Bramble & Byte (CC-BY 4.0)", 248, CINZA)
+    centro("asteroides: Space Shooter Redux por Kenney (CC0)", 258, CINZA)
     if (frame // 30) % 2 == 0 then centro("cima/baixo: dificuldade   " .. AJUDA[5], 222, VERDE) end
     if apertou(ACAO) then reset() end
     return
@@ -782,6 +882,7 @@ function update()
     atualiza_player(players[1])
     atualiza_player(players[2])
   end
+  if estado ~= "pausa" then atualiza_asteroides() end
   if estado ~= "pausa" then atualiza_tiros() end
 
   if shake > 0 then
@@ -819,6 +920,14 @@ function update()
       if t.laser then
         ui.rectfill(t.x, t.y, t.x + t.w, t.y + t.h, c); ui.rectfill(t.x, t.y + 2, t.x + t.w, t.y + t.h - 2, BRANCO)
       else forma(T.tiro_forma, t.x, t.y, 5, 5, c, t.dir) end
+    end
+  end
+  for i = 1, MAX_AST do
+    local a = asts[i]
+    if a.ativo then
+      local ti, spr = AST_TIPOS[a.tipo], AST_SPR[a.tipo]
+      if spr then ui.spr(spr, a.x - ti.tam / 2, a.y - ti.tam / 2)
+      else ui.circfill(a.x, a.y, ti.raio, CINZA) end
     end
   end
   for i = 1, MAX_PART do
